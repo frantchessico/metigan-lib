@@ -381,8 +381,9 @@ class Metigan {
         if (!messageData.subject) {
             return { isValid: false, error: 'Subject is required' };
         }
-        if (!messageData.content) {
-            return { isValid: false, error: 'Content is required' };
+        // Either content or templateId is required
+        if (!messageData.content && !messageData.templateId) {
+            return { isValid: false, error: 'Either content or templateId is required' };
         }
         // Validate sender email format
         const fromEmail = this._extractEmailAddress(messageData.from);
@@ -660,11 +661,14 @@ class Metigan {
                 from: (0, security_1.sanitizeEmail)(options.from),
                 recipients: options.recipients.map(r => (0, security_1.sanitizeEmail)(r)),
                 subject: (0, security_1.sanitizeSubject)(options.subject),
-                content: this.shouldSanitizeHtml ? (0, security_1.sanitizeHtml)(options.content) : options.content,
+                content: options.content ? (this.shouldSanitizeHtml ? (0, security_1.sanitizeHtml)(options.content) : options.content) : undefined,
+                templateId: options.templateId,
                 cc: (_a = options.cc) === null || _a === void 0 ? void 0 : _a.map(c => (0, security_1.sanitizeEmail)(c)),
                 bcc: (_b = options.bcc) === null || _b === void 0 ? void 0 : _b.map(b => (0, security_1.sanitizeEmail)(b)),
                 replyTo: options.replyTo ? (0, security_1.sanitizeEmail)(options.replyTo) : undefined
             };
+            // Determine if using template
+            const useTemplate = !!options.templateId;
             this.debug.log('Email sanitized and validated');
             // Process attachments if present
             let formData;
@@ -681,7 +685,14 @@ class Metigan {
                     formData.append('from', sanitizedOptions.from);
                     formData.append('recipients', JSON.stringify(sanitizedOptions.recipients));
                     formData.append('subject', sanitizedOptions.subject);
-                    formData.append('content', sanitizedOptions.content);
+                    // Add content or template
+                    if (useTemplate && sanitizedOptions.templateId) {
+                        formData.append('useTemplate', 'true');
+                        formData.append('templateId', sanitizedOptions.templateId);
+                    }
+                    else if (sanitizedOptions.content) {
+                        formData.append('content', sanitizedOptions.content);
+                    }
                     // Add CC if provided
                     if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
                         formData.append('cc', JSON.stringify(sanitizedOptions.cc));
@@ -711,9 +722,16 @@ class Metigan {
                         from: sanitizedOptions.from,
                         recipients: sanitizedOptions.recipients,
                         subject: sanitizedOptions.subject,
-                        content: sanitizedOptions.content,
                         attachments: processedAttachments
                     };
+                    // Add content or template
+                    if (useTemplate && sanitizedOptions.templateId) {
+                        formData.useTemplate = 'true';
+                        formData.templateId = sanitizedOptions.templateId;
+                    }
+                    else if (sanitizedOptions.content) {
+                        formData.content = sanitizedOptions.content;
+                    }
                     // Add CC if provided
                     if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
                         formData.cc = sanitizedOptions.cc;
@@ -735,8 +753,15 @@ class Metigan {
                     from: sanitizedOptions.from,
                     recipients: sanitizedOptions.recipients,
                     subject: sanitizedOptions.subject,
-                    content: sanitizedOptions.content,
                 };
+                // Add content or template
+                if (useTemplate && sanitizedOptions.templateId) {
+                    formData.useTemplate = 'true';
+                    formData.templateId = sanitizedOptions.templateId;
+                }
+                else if (sanitizedOptions.content) {
+                    formData.content = sanitizedOptions.content;
+                }
                 // Add CC if provided
                 if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
                     formData.cc = sanitizedOptions.cc;

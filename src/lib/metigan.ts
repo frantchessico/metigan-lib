@@ -306,8 +306,10 @@ export interface EmailOptions {
   recipients: string[];
   /** Email subject */
   subject: string;
-  /** Email content (HTML supported) */
-  content: string;
+  /** Email content (HTML supported) - Required if not using templateId */
+  content?: string;
+  /** Template ID for using pre-created templates (optional) */
+  templateId?: string;
   /** Optional file attachments */
   attachments?: Array<File | NodeAttachment | CustomAttachment>;
   /** Optional CC recipients */
@@ -538,8 +540,9 @@ export class Metigan {
       return { isValid: false, error: 'Subject is required' };
     }
     
-    if (!messageData.content) {
-      return { isValid: false, error: 'Content is required' };
+    // Either content or templateId is required
+    if (!messageData.content && !messageData.templateId) {
+      return { isValid: false, error: 'Either content or templateId is required' };
     }
 
     // Validate sender email format
@@ -852,11 +855,15 @@ export class Metigan {
         from: sanitizeEmail(options.from),
         recipients: options.recipients.map(r => sanitizeEmail(r)),
         subject: sanitizeSubject(options.subject),
-        content: this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content,
+        content: options.content ? (this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content) : undefined,
+        templateId: options.templateId,
         cc: options.cc?.map(c => sanitizeEmail(c)),
         bcc: options.bcc?.map(b => sanitizeEmail(b)),
         replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : undefined
       };
+      
+      // Determine if using template
+      const useTemplate = !!options.templateId;
       
       this.debug.log('Email sanitized and validated');
       
@@ -877,7 +884,14 @@ export class Metigan {
           formData.append('from', sanitizedOptions.from);
           formData.append('recipients', JSON.stringify(sanitizedOptions.recipients));
           formData.append('subject', sanitizedOptions.subject);
-          formData.append('content', sanitizedOptions.content);
+          
+          // Add content or template
+          if (useTemplate && sanitizedOptions.templateId) {
+            formData.append('useTemplate', 'true');
+            formData.append('templateId', sanitizedOptions.templateId);
+          } else if (sanitizedOptions.content) {
+            formData.append('content', sanitizedOptions.content);
+          }
           
           // Add CC if provided
           if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
@@ -911,9 +925,16 @@ export class Metigan {
             from: sanitizedOptions.from,
             recipients: sanitizedOptions.recipients,
             subject: sanitizedOptions.subject,
-            content: sanitizedOptions.content,
             attachments: processedAttachments
           };
+          
+          // Add content or template
+          if (useTemplate && sanitizedOptions.templateId) {
+            formData.useTemplate = 'true';
+            formData.templateId = sanitizedOptions.templateId;
+          } else if (sanitizedOptions.content) {
+            formData.content = sanitizedOptions.content;
+          }
           
           // Add CC if provided
           if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
@@ -939,8 +960,15 @@ export class Metigan {
           from: sanitizedOptions.from,
           recipients: sanitizedOptions.recipients,
           subject: sanitizedOptions.subject,
-          content: sanitizedOptions.content,
         };
+        
+        // Add content or template
+        if (useTemplate && sanitizedOptions.templateId) {
+          formData.useTemplate = 'true';
+          formData.templateId = sanitizedOptions.templateId;
+        } else if (sanitizedOptions.content) {
+          formData.content = sanitizedOptions.content;
+        }
         
         // Add CC if provided
         if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {

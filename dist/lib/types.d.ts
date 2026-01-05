@@ -416,3 +416,80 @@ export interface MetiganClientOptions {
     /** Max requests per second for rate limiting (default: 10) */
     maxRequestsPerSecond?: number;
 }
+/**
+ * Email template component style
+ */
+export interface TemplateComponentStyle {
+    color?: string;
+    backgroundColor?: string;
+    fontSize?: number;
+    fontWeight?: string;
+    textAlign?: string;
+    borderRadius?: number;
+    padding?: string | number;
+    width?: number | string;
+    align?: string;
+    borderColor?: string;
+    spacing?: number;
+}
+/**
+ * Email template component
+ */
+export interface TemplateComponent {
+    id: string;
+    type: string;
+    label?: string;
+    content?: string;
+    url?: string;
+    title?: string;
+    styles?: TemplateComponentStyle;
+    [key: string]: any;
+}
+/**
+ * Email template styles
+ */
+export interface TemplateStyles {
+    backgroundColor?: string;
+    width?: number;
+    padding?: number;
+}
+/**
+ * Email template data
+ */
+export interface EmailTemplate {
+    /** Template ID */
+    id: string;
+    /** Template name */
+    name: string;
+    /** Email subject line */
+    subject: string;
+    /** Template components (for advanced usage) */
+    components?: TemplateComponent[];
+    /** Template styles */
+    styles?: TemplateStyles;
+    /** Creation date */
+    createdAt?: Date;
+    /** Last update date */
+    updatedAt?: Date;
+}
+/**
+ * Email template list response
+ */
+export interface EmailTemplateListResponse {
+    templates: EmailTemplate[];
+    pagination: {
+        total: number;
+        page: number;
+        limit: number;
+        pages: number;
+    };
+}
+/**
+ * Template module options
+ */
+export interface TemplateModuleOptions {
+    apiKey: string;
+    timeout?: number;
+    retryCount?: number;
+    retryDelay?: number;
+}
