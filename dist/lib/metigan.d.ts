@@ -1,7 +1,7 @@
 /**
  * Metigan - Email Sending Library
  * A simple library for sending emails through the Metigan API
- * @version 1.1.0
+ * @version 2.0.0
  */
 /**
  * Custom error class for Metigan-specific errors
@@ -95,16 +95,24 @@ export type TemplateFunction = (variables?: TemplateVariables) => string;
  * Metigan client options
  */
 export interface MetiganOptions {
-    /** ID do usuário para logs */
+    /** User ID for logging */
     userId?: string;
-    /** Desabilitar logs */
+    /** Disable logging */
     disableLogs?: boolean;
-    /** Número de tentativas para operações que falham */
+    /** Number of retry attempts for failed operations */
     retryCount?: number;
-    /** Tempo base entre tentativas (ms) */
+    /** Base delay between retries (ms) */
     retryDelay?: number;
-    /** Timeout para requisições (ms) */
+    /** Request timeout (ms) */
     timeout?: number;
+    /** Enable debug mode (shows internal logs) */
+    debug?: boolean;
+    /** Enable HTML sanitization (default: true) */
+    sanitizeHtml?: boolean;
+    /** Enable rate limiting (default: true) */
+    enableRateLimit?: boolean;
+    /** Max requests per second (default: 10) */
+    maxRequestsPerSecond?: number;
 }
 /**
  * Metigan client for sending emails
@@ -115,6 +123,9 @@ export declare class Metigan {
     private timeout;
     private retryCount;
     private retryDelay;
+    private debug;
+    private shouldSanitizeHtml;
+    private rateLimiter;
     /**
      * Create a new Metigan client
      * @param apiKey - Your API key
@@ -158,18 +169,25 @@ export declare class Metigan {
      */
     private _processAttachments;
     /**
+     * Validate attachments for security
+     * @param attachments - Array of attachments to validate
+     * @throws MetiganError if validation fails
+     * @private
+     */
+    private _validateAttachments;
+    /**
      * Get MIME type based on file extension
-     * @param filename - Nome do arquivo
+     * @param filename - File name
      * @returns MIME type
      * @private
      */
     private _getMimeType;
     /**
-     * Tenta fazer uma requisição HTTP com sistema de retry
-     * @param url - URL da requisição
-     * @param data - Dados para enviar
-     * @param headers - Cabeçalhos da requisição
-     * @param method - Método HTTP
+     * Attempts HTTP request with retry system
+     * @param url - Request URL
+     * @param data - Data to send
+     * @param headers - Request headers
+     * @param method - HTTP method
      * @private
      */
     private _makeRequestWithRetry;
@@ -184,5 +202,28 @@ export declare class Metigan {
      * @private
      */
     private _generateTrackingId;
+    /**
+     * Enable debug mode
+     */
+    enableDebug(): void;
+    /**
+     * Disable debug mode
+     */
+    disableDebug(): void;
+    /**
+     * Reset rate limiter (useful for testing)
+     */
+    resetRateLimit(): void;
+    /**
+     * Check if rate limit allows a request
+     * @returns True if request is allowed
+     */
+    canMakeRequest(): boolean;
+    /**
+     * Get time until next request is allowed (in ms)
+     * @returns Milliseconds until next request is allowed, or 0 if allowed now
+     */
+    getTimeUntilNextRequest(): number;
 }
+export { sanitizeHtml, sanitizeEmail, sanitizeSubject, isAllowedMimeType, isSafeFileExtension, RateLimiter, DebugLogger, ALLOWED_MIME_TYPES, BLOCKED_MIME_TYPES } from './security';
 export default Metigan;
