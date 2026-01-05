@@ -1,761 +1,581 @@
-Thought for 5 seconds### Metigan Documentation
+# Metigan SDK
 
-Metigan is a powerful Node.js/TypeScript library for sending emails through the Metigan API. This library provides a simple and flexible way to send emails, manage contacts, use templates, and track email analytics.
+The official Metigan library for Node.js and browsers. Send emails, manage forms, contacts, and audiences with ease.
 
-## Installation
+## 📦 Installation
 
-Install the Metigan library using npm:
-
-```shellscript
+```bash
 npm install metigan
-```
-
-Or using yarn:
-
-```shellscript
+# or
 yarn add metigan
 ```
 
-## Quick Start
+## 🚀 Quick Start
 
 ```typescript
 import Metigan from 'metigan';
 
-// Initialize the client with your API key
-const metigan = new Metigan('your-api-key');
-
-// Send a simple email
-async function sendSimpleEmail() {
-  try {
-    const response = await metigan.sendEmail({
-      from: 'sender@example.com',
-      recipients: ['recipient@example.com'],
-      subject: 'Hello from Metigan',
-      content: '<h1>Hello World!</h1><p>This is a test email from Metigan.</p>'
-    });
-    
-    console.log('Email sent successfully:', response);
-  } catch (error) {
-    console.error('Failed to send email:', error);
-  }
-}
-
-sendSimpleEmail();
-```
-
-## Core Concepts
-
-### Client Initialization
-
-The Metigan client is the main entry point for all operations. Initialize it with your API key and optional configuration.
-
-```typescript
-import Metigan from 'metigan';
-
-// Basic initialization
-const metigan = new Metigan('your-api-key');
-
-// Advanced initialization with options
-const metiganAdvanced = new Metigan('your-api-key', {
-  userId: 'user-123', // For logging purposes
-  disableLogs: false, // Enable/disable logging
-  retryCount: 3,      // Number of retry attempts
-  retryDelay: 1000,   // Delay between retries in ms
-  timeout: 30000      // Request timeout in ms
+// Initialize the client with all features
+const metigan = new Metigan({
+  apiKey: 'your-api-key'
 });
-```
 
-## API Reference
-
-### Metigan Class
-
-The main class for interacting with the Metigan API.
-
-#### Constructor
-
-```typescript
-constructor(apiKey: string, options?: MetiganOptions)
-```
-
-**Parameters:**
-
-- `apiKey` (string): Your Metigan API key
-- `options` (MetiganOptions, optional): Configuration options
-
-
-**MetiganOptions:**
-
-- `userId` (string, optional): User ID for logging purposes
-- `disableLogs` (boolean, optional): Whether to disable logging
-- `retryCount` (number, optional): Number of retry attempts for failed operations
-- `retryDelay` (number, optional): Base delay between retries in milliseconds
-- `timeout` (number, optional): Request timeout in milliseconds
-
-
-### Email Operations
-
-#### Send Email
-
-Sends an email to one or more recipients.
-
-```typescript
-async sendEmail(options: EmailOptions): Promise<EmailApiResponse>
-```
-
-**Parameters:**
-
-- `options` (EmailOptions): Email configuration
-
-
-**EmailOptions:**
-
-- `from` (string): Sender email address
-- `recipients` (string[]): Array of recipient email addresses
-- `subject` (string): Email subject
-- `content` (string): Email content (HTML supported)
-- `attachments` (Array`<File | NodeAttachment | CustomAttachment>`, optional): Email attachments
-- `contactOptions` (ContactCreationOptions, optional): Options for creating contacts
-- `trackingId` (string, optional): Unique ID for tracking email analytics
-
-
-**Returns:**
-
-- Promise resolving to EmailApiResponse
-
-
-**Example:**
-
-```typescript
-const response = await metigan.sendEmail({
-  from: 'sender@example.com',
-  recipients: ['recipient1@example.com', 'recipient2@example.com'],
-  subject: 'Important Announcement',
-  content: '<h1>Hello!</h1><p>This is an important announcement.</p>',
-  trackingId: metigan.generateTrackingId()
+// Send email
+await metigan.email.sendEmail({
+  from: 'Your Company <noreply@yourcompany.com>',
+  recipients: ['customer@email.com'],
+  subject: 'Welcome!',
+  content: '<h1>Hello!</h1><p>Thank you for signing up.</p>'
 });
-```
 
-#### Send Email with Template
-
-Sends an email using a predefined template.
-
-```typescript
-async sendEmailWithTemplate(options: TemplateOptions): Promise<EmailApiResponse>
-```
-
-**Parameters:**
-
-- `options` (TemplateOptions): Template configuration
-
-
-**TemplateOptions:**
-
-- `from` (string): Sender email address
-- `recipients` (string[]): Array of recipient email addresses
-- `subject` (string): Email subject
-- `templateId` (string): ID of the template to use
-- `templateVariables` (TemplateVariables, optional): Variables to replace in the template
-- `attachments` (Array`<File | NodeAttachment | CustomAttachment>`, optional): Email attachments
-- `contactOptions` (ContactCreationOptions, optional): Options for creating contacts
-- `trackingId` (string, optional): Unique ID for tracking email analytics
-
-
-**Example:**
-
-```typescript
-const response = await metigan.sendEmailWithTemplate({
-  from: 'sender@example.com',
-  recipients: ['recipient@example.com'],
-  subject: 'Welcome to Our Service',
-  templateId: 'welcome-template-123',
-  templateVariables: {
-    userName: 'John Doe',
-    activationLink: 'https://example.com/activate?token=abc123'
+// Submit form
+await metigan.forms.submit({
+  formId: 'form-123',
+  data: {
+    email: 'user@email.com',
+    name: 'John Doe'
   }
 });
-```
 
-#### Create Template
-
-Creates a reusable email template with placeholders.
-
-```typescript
-createTemplate(htmlContent: string): TemplateFunction
-```
-
-**Parameters:**
-
-- `htmlContent` (string): HTML content with {placeholders}
-
-
-**Returns:**
-
-- TemplateFunction: A function that accepts variables and returns the populated template
-
-
-**Example:**
-
-```typescript
-const welcomeTemplate = metigan.createTemplate(`
-  <h1>Welcome, {{name}}!</h1>
-  <p>Thank you for joining our service.</p>
-  <p>Click <a href="{{activationLink}}">here</a> to activate your account.</p>
-`);
-
-// Use the template
-const emailContent = welcomeTemplate({
-  name: 'John Doe',
-  activationLink: 'https://example.com/activate?token=abc123'
-});
-
-// Send email with the populated template
-await metigan.sendEmail({
-  from: 'sender@example.com',
-  recipients: ['john@example.com'],
-  subject: 'Welcome to Our Service',
-  content: emailContent
+// Create contact
+await metigan.contacts.create({
+  email: 'new@email.com',
+  firstName: 'Jane',
+  audienceId: 'audience-456'
 });
 ```
 
-#### Generate Tracking ID
+## 📧 Email Module
 
-Generates a unique tracking ID for email analytics.
-
-```typescript
-generateTrackingId(): string
-```
-
-**Returns:**
-
-- string: A unique tracking ID
-
-
-**Example:**
+### Basic Send
 
 ```typescript
-const trackingId = metigan.generateTrackingId();
-console.log(trackingId); // e.g., "mtg-1647532890123-4567"
-```
-
-### Contact Management
-
-#### Create Contacts
-
-Creates contacts in the specified audience.
-
-```typescript
-async createContacts(emails: string[], options: ContactCreationOptions): Promise<ContactApiResponse>
-```
-
-**Parameters:**
-
-- `emails` (string[]): List of email addresses
-- `options` (ContactCreationOptions): Contact creation options
-
-
-**ContactCreationOptions:**
-
-- `createContact` (boolean): Must be true
-- `audienceId` (string): Audience ID from Metigan dashboard
-- `contactFields` (Record`<string, any>`, optional): Additional contact fields
-
-
-**Example:**
-
-```typescript
-const response = await metigan.createContacts(
-  ['contact1@example.com', 'contact2@example.com'],
-  {
-    createContact: true,
-    audienceId: 'audience-123',
-    contactFields: {
-      firstName: 'John',
-      lastName: 'Doe',
-      company: 'Acme Inc'
-    }
-  }
-);
-```
-
-#### Get Contact
-
-Retrieves a contact by email address.
-
-```typescript
-async getContact(email: string, audienceId: string): Promise<ContactApiResponse>
-```
-
-**Parameters:**
-
-- `email` (string): Email address of the contact
-- `audienceId` (string): Audience ID from Metigan dashboard
-
-
-**Example:**
-
-```typescript
-const contact = await metigan.getContact('contact@example.com', 'audience-123');
-```
-
-#### List Contacts
-
-Lists contacts in an audience.
-
-```typescript
-async listContacts(options: ContactQueryOptions): Promise<ContactApiResponse>
-```
-
-**Parameters:**
-
-- `options` (ContactQueryOptions): Query options
-
-
-**ContactQueryOptions:**
-
-- `audienceId` (string): Audience ID from Metigan dashboard
-- `page` (number, optional): Page number for pagination
-- `limit` (number, optional): Number of contacts per page
-- `filters` (Record`<string, any>`, optional): Filters to apply
-
-
-**Example:**
-
-```typescript
-const contacts = await metigan.listContacts({
-  audienceId: 'audience-123',
-  page: 1,
-  limit: 50,
-  filters: {
-    company: 'Acme Inc'
-  }
+const response = await metigan.email.sendEmail({
+  from: 'Your Company <noreply@yourcompany.com>',
+  recipients: ['recipient@email.com'],
+  subject: 'Email Subject',
+  content: '<h1>HTML Content</h1>'
 });
 ```
 
-#### Update Contact
-
-Updates a contact's information.
-
-```typescript
-async updateContact(email: string, options: ContactUpdateOptions): Promise<ContactApiResponse>
-```
-
-**Parameters:**
-
-- `email` (string): Email address of the contact to update
-- `options` (ContactUpdateOptions): Update options
-
-
-**ContactUpdateOptions:**
-
-- `audienceId` (string): Audience ID from Metigan dashboard
-- `fields` (Record`<string, any>`): Fields to update
-
-
-**Example:**
-
-```typescript
-const response = await metigan.updateContact('contact@example.com', {
-  audienceId: 'audience-123',
-  fields: {
-    firstName: 'Jane',
-    lastName: 'Smith',
-    company: 'New Company Inc'
-  }
-});
-```
-
-#### Delete Contact
-
-Deletes a contact.
-
-```typescript
-async deleteContact(email: string, audienceId: string): Promise<ContactApiResponse>
-```
-
-**Parameters:**
-
-- `email` (string): Email address of the contact to delete
-- `audienceId` (string): Audience ID from Metigan dashboard
-
-
-**Example:**
-
-```typescript
-const response = await metigan.deleteContact('contact@example.com', 'audience-123');
-```
-
-### Combined Operations
-
-#### Send Email and Create Contacts
-
-Sends an email and creates contacts in one operation.
-
-```typescript
-async sendEmailAndCreateContacts(options: EmailOptions): Promise<EmailApiResponse>
-```
-
-**Parameters:**
-
-- `options` (EmailOptions): Email options with contact creation settings
-
-
-**Example:**
-
-```typescript
-const response = await metigan.sendEmailAndCreateContacts({
-  from: 'sender@example.com',
-  recipients: ['new-contact@example.com'],
-  subject: 'Welcome to Our Service',
-  content: '<h1>Welcome!</h1><p>Thank you for joining our service.</p>',
-  contactOptions: {
-    createContact: true,
-    audienceId: 'audience-123',
-    contactFields: {
-      firstName: 'New',
-      lastName: 'User'
-    }
-  }
-});
-```
-
-#### Send Template and Create Contacts
-
-Sends an email using a template and creates contacts in one operation.
-
-```typescript
-async sendTemplateAndCreateContacts(options: TemplateOptions): Promise<EmailApiResponse>
-```
-
-**Parameters:**
-
-- `options` (TemplateOptions): Template options with contact creation settings
-
-
-**Example:**
-
-```typescript
-const response = await metigan.sendTemplateAndCreateContacts({
-  from: 'sender@example.com',
-  recipients: ['new-contact@example.com'],
-  subject: 'Welcome to Our Service',
-  templateId: 'welcome-template-123',
-  templateVariables: {
-    userName: 'New User',
-    activationLink: 'https://example.com/activate?token=xyz789'
-  },
-  contactOptions: {
-    createContact: true,
-    audienceId: 'audience-123',
-    contactFields: {
-      firstName: 'New',
-      lastName: 'User'
-    }
-  }
-});
-```
-
-## Attachments
-
-Metigan supports file attachments in different environments:
-
-### Browser Environment
-
-In browser environments, use the File API:
-
-```typescript
-// Assuming you have a file input element
-const fileInput = document.getElementById('fileInput') as HTMLInputElement;
-const files = fileInput.files;
-
-if (files && files.length > 0) {
-  await metigan.sendEmail({
-    from: 'sender@example.com',
-    recipients: ['recipient@example.com'],
-    subject: 'Email with Attachment',
-    content: '<p>Please find the attached file.</p>',
-    attachments: Array.from(files)
-  });
-}
-```
-
-### Node.js Environment
-
-In Node.js, use Buffer objects:
+### With Attachments (Node.js)
 
 ```typescript
 import fs from 'fs';
-import path from 'path';
 
-const filePath = path.join(__dirname, 'document.pdf');
-const fileBuffer = fs.readFileSync(filePath);
-
-await metigan.sendEmail({
-  from: 'sender@example.com',
-  recipients: ['recipient@example.com'],
-  subject: 'Email with Attachment',
-  content: '<p>Please find the attached file.</p>',
-  attachments: [{
-    buffer: fileBuffer,
-    originalname: 'document.pdf',
-    mimetype: 'application/pdf'
-  }]
+const response = await metigan.email.sendEmail({
+  from: 'company@email.com',
+  recipients: ['customer@email.com'],
+  subject: 'Important Document',
+  content: 'Please find the document attached.',
+  attachments: [
+    {
+      buffer: fs.readFileSync('./document.pdf'),
+      originalname: 'document.pdf',
+      mimetype: 'application/pdf'
+    }
+  ]
 });
 ```
 
-### Custom Attachments
-
-You can also create custom attachments:
+### With CC and BCC
 
 ```typescript
-await metigan.sendEmail({
-  from: 'sender@example.com',
-  recipients: ['recipient@example.com'],
-  subject: 'Email with Attachment',
-  content: '<p>Please find the attached file.</p>',
-  attachments: [{
-    content: 'Hello, this is a text file content.',
-    filename: 'hello.txt',
-    contentType: 'text/plain'
-  }]
+await metigan.email.sendEmail({
+  from: 'company@email.com',
+  recipients: ['main@email.com'],
+  subject: 'Meeting',
+  content: 'Email content',
+  cc: ['copy@email.com'],
+  bcc: ['hidden-copy@email.com'],
+  replyTo: 'reply-here@email.com'
 });
 ```
 
-## Error Handling
+## 📋 Forms Module
 
-Metigan uses a custom `MetiganError` class for error handling. All API methods return promises that may reject with a `MetiganError`.
+### Submit Response
 
 ```typescript
-try {
-  const response = await metigan.sendEmail({
-    from: 'sender@example.com',
-    recipients: ['recipient@example.com'],
-    subject: 'Test Email',
-    content: '<p>Test content</p>'
+const response = await metigan.forms.submit({
+  formId: 'form-123', // or form slug
+  data: {
+    'field-email': 'user@email.com',
+    'field-name': 'John Doe',
+    'field-message': 'Hello, I would like more information.'
+  }
+});
+
+console.log(response.message); // "Thank you for your submission!"
+```
+
+### Get Public Form
+
+```typescript
+// By slug (for public display)
+const form = await metigan.forms.getPublicForm('my-form');
+
+console.log(form.title);
+console.log(form.fields);
+```
+
+### List Forms
+
+```typescript
+const { forms, pagination } = await metigan.forms.listForms({
+  page: 1,
+  limit: 10
+});
+
+forms.forEach(form => {
+  console.log(`${form.title} - ${form.analytics?.submissions || 0} responses`);
+});
+```
+
+### Create Form
+
+```typescript
+const newForm = await metigan.forms.createForm({
+  title: 'Contact Form',
+  description: 'Get in touch with us',
+  fields: [
+    {
+      id: 'field-email',
+      type: 'email',
+      label: 'Your Email',
+      required: true
+    },
+    {
+      id: 'field-name',
+      type: 'text',
+      label: 'Your Name',
+      required: true
+    },
+    {
+      id: 'field-subject',
+      type: 'select',
+      label: 'Subject',
+      options: ['Support', 'Sales', 'Partnerships']
+    },
+    {
+      id: 'field-message',
+      type: 'textarea',
+      label: 'Message',
+      required: true
+    }
+  ],
+  settings: {
+    successMessage: 'Thank you! We will get back to you soon.',
+    notifyEmail: 'contact@company.com'
+  }
+});
+```
+
+### Publish Form
+
+```typescript
+const { publishedUrl, slug } = await metigan.forms.publishForm('form-123', 'contact');
+console.log(`Form published at: ${publishedUrl}`);
+```
+
+### Form Analytics
+
+```typescript
+const analytics = await metigan.forms.getAnalytics('form-123');
+
+console.log(`Views: ${analytics.views}`);
+console.log(`Submissions: ${analytics.submissions}`);
+console.log(`Conversion rate: ${analytics.conversionRate}%`);
+```
+
+## 👥 Contacts Module
+
+### Create Contact
+
+```typescript
+const contact = await metigan.contacts.create({
+  email: 'new@email.com',
+  firstName: 'Jane',
+  lastName: 'Doe',
+  audienceId: 'audience-123',
+  tags: ['customer', 'newsletter']
+});
+```
+
+### Get Contact
+
+```typescript
+// By ID
+const contact = await metigan.contacts.get('contact-456');
+
+// By email
+const contact = await metigan.contacts.getByEmail('jane@email.com', 'audience-123');
+```
+
+### Update Contact
+
+```typescript
+const updated = await metigan.contacts.update('contact-456', {
+  firstName: 'Jane Marie',
+  tags: ['customer', 'vip']
+});
+```
+
+### Manage Subscription
+
+```typescript
+// Unsubscribe
+await metigan.contacts.unsubscribe('contact-456');
+
+// Resubscribe
+await metigan.contacts.subscribe('contact-456');
+```
+
+### Manage Tags
+
+```typescript
+// Add tags
+await metigan.contacts.addTags('contact-456', ['vip', 'black-friday']);
+
+// Remove tags
+await metigan.contacts.removeTags('contact-456', ['test']);
+```
+
+### List Contacts
+
+```typescript
+const { contacts, pagination } = await metigan.contacts.list({
+  audienceId: 'audience-123',
+  status: 'subscribed',
+  tag: 'customer',
+  page: 1,
+  limit: 50
+});
+```
+
+### Bulk Import
+
+```typescript
+const result = await metigan.contacts.bulkImport(
+  [
+    { email: 'john@email.com', firstName: 'John' },
+    { email: 'jane@email.com', firstName: 'Jane' },
+    { email: 'peter@email.com', firstName: 'Peter', tags: ['vip'] }
+  ],
+  'audience-123'
+);
+
+console.log(`Imported: ${result.imported}`);
+console.log(`Failed: ${result.failed}`);
+```
+
+### Search Contacts
+
+```typescript
+const results = await metigan.contacts.search('doe', 'audience-123');
+```
+
+## 📊 Audiences Module
+
+### Create Audience
+
+```typescript
+const audience = await metigan.audiences.create({
+  name: 'Main Newsletter',
+  description: 'Main subscriber list'
+});
+```
+
+### List Audiences
+
+```typescript
+const { audiences, pagination } = await metigan.audiences.list({
+  page: 1,
+  limit: 10
+});
+
+audiences.forEach(audience => {
+  console.log(`${audience.name}: ${audience.count} contacts`);
+});
+```
+
+### Audience Statistics
+
+```typescript
+const stats = await metigan.audiences.getStats('audience-123');
+
+console.log(`Total: ${stats.total}`);
+console.log(`Subscribed: ${stats.subscribed}`);
+console.log(`Unsubscribed: ${stats.unsubscribed}`);
+console.log(`Bounced: ${stats.bounced}`);
+```
+
+### Clean Audience
+
+```typescript
+// Remove bounced and unsubscribed contacts
+const { removed } = await metigan.audiences.clean('audience-123');
+console.log(`${removed} contacts removed`);
+```
+
+### Merge Audiences
+
+```typescript
+// Merge source into target (source is deleted)
+const merged = await metigan.audiences.merge(
+  'source-audience-id',
+  'target-audience-id'
+);
+```
+
+## ⚙️ Advanced Configuration
+
+```typescript
+const metigan = new Metigan({
+  apiKey: 'your-api-key',
+  
+  // User ID for logging
+  userId: 'user-123',
+  
+  // Disable logging
+  disableLogs: true,
+  
+  // Timeout in milliseconds
+  timeout: 60000,
+  
+  // Number of retries on failure
+  retryCount: 5,
+  
+  // Delay between retries (ms)
+  retryDelay: 2000,
+  
+  // Security options (see Security section)
+  debug: false,
+  sanitizeHtml: true,
+  enableRateLimit: true,
+  maxRequestsPerSecond: 10
+});
+```
+
+## 🔒 Security Features
+
+The SDK includes built-in security features:
+
+### HTML Sanitization
+
+Automatically removes dangerous HTML tags and attributes from email content to prevent XSS attacks:
+
+```typescript
+// HTML sanitization is enabled by default
+const metigan = new Metigan({
+  apiKey: 'your-api-key',
+  sanitizeHtml: true // default
+});
+
+// Dangerous content is automatically sanitized
+await metigan.email.sendEmail({
+  from: 'company@email.com',
+  recipients: ['user@email.com'],
+  subject: 'Newsletter',
+  content: '<h1>Hello</h1><script>alert("xss")</script>' // Script tag will be removed
+});
+```
+
+### Client-Side Rate Limiting
+
+Prevents accidental API abuse with built-in rate limiting:
+
+```typescript
+const metigan = new Metigan({
+  apiKey: 'your-api-key',
+  enableRateLimit: true, // default
+  maxRequestsPerSecond: 10 // default
+});
+
+// Check rate limit before making requests
+if (metigan.email.canMakeRequest()) {
+  await metigan.email.sendEmail({...});
+} else {
+  const waitTime = metigan.email.getTimeUntilNextRequest();
+  console.log(`Please wait ${waitTime}ms before next request`);
+}
+
+// Reset rate limiter if needed
+metigan.email.resetRateLimit();
+```
+
+### Attachment Validation
+
+Validates file attachments for security:
+
+```typescript
+import { isAllowedMimeType, isSafeFileExtension, ALLOWED_MIME_TYPES } from 'metigan';
+
+// Check if file type is safe
+const filename = 'document.pdf';
+const mimetype = 'application/pdf';
+
+if (isSafeFileExtension(filename) && isAllowedMimeType(mimetype)) {
+  // Safe to attach
+}
+
+// View allowed MIME types
+console.log(ALLOWED_MIME_TYPES);
+```
+
+### Email Header Injection Prevention
+
+Email addresses and subjects are automatically sanitized to prevent header injection attacks:
+
+```typescript
+import { sanitizeEmail, sanitizeSubject } from 'metigan';
+
+// Remove newlines and dangerous characters
+const safeEmail = sanitizeEmail('user@email.com\r\nBcc: hacker@evil.com');
+const safeSubject = sanitizeSubject('Subject\r\nFrom: hacker@evil.com');
+```
+
+### Debug Mode
+
+Enable debug mode for troubleshooting (logs are hidden by default in production):
+
+```typescript
+const metigan = new Metigan({
+  apiKey: 'your-api-key',
+  debug: true // Shows internal logs
+});
+
+// Or enable/disable at runtime
+metigan.email.enableDebug();
+metigan.email.disableDebug();
+```
+
+### Custom Rate Limiter
+
+For advanced use cases, you can create your own rate limiter:
+
+```typescript
+import { RateLimiter } from 'metigan';
+
+const limiter = new RateLimiter({
+  maxRequests: 5,
+  windowMs: 1000 // 5 requests per second
+});
+
+if (limiter.tryRequest()) {
+  // Request allowed and recorded
+  await makeApiCall();
+} else {
+  // Rate limited
+  console.log(`Wait ${limiter.getTimeUntilNextRequest()}ms`);
+}
+```
+
+## 🔧 Using Individual Modules
+
+If you only need a specific module:
+
+```typescript
+import { MetiganForms, MetiganContacts, MetiganAudiences } from 'metigan';
+
+// Forms only
+const forms = new MetiganForms({
+  apiKey: 'your-api-key'
+});
+
+// Contacts only
+const contacts = new MetiganContacts({
+  apiKey: 'your-api-key'
+});
+
+// Audiences only
+const audiences = new MetiganAudiences({
+  apiKey: 'your-api-key'
+});
+```
+
+## 🌐 Browser Usage
+
+```html
+<script src="https://unpkg.com/metigan/dist/index.js"></script>
+<script>
+  const metigan = new Metigan({ apiKey: 'your-api-key' });
+  
+  // Submit form
+  document.getElementById('my-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const formData = new FormData(e.target);
+    const data = Object.fromEntries(formData);
+    
+    try {
+      const response = await metigan.forms.submit({
+        formId: 'form-123',
+        data
+      });
+      alert(response.message);
+    } catch (error) {
+      alert('Error submitting: ' + error.message);
+    }
   });
-  console.log('Email sent successfully:', response);
+</script>
+```
+
+## 🛡️ Error Handling
+
+```typescript
+import { MetiganError, ValidationError, ApiError } from 'metigan';
+
+try {
+  await metigan.email.sendEmail({
+    from: 'invalid',
+    recipients: [],
+    subject: '',
+    content: ''
+  });
 } catch (error) {
-  if (error instanceof MetiganError) {
+  if (error instanceof ValidationError) {
+    console.error('Invalid data:', error.message);
+  } else if (error instanceof ApiError) {
+    console.error(`API error (${error.status}):`, error.message);
+  } else if (error instanceof MetiganError) {
     console.error('Metigan error:', error.message);
-    // Handle specific error cases
   } else {
-    console.error('Unexpected error:', error);
+    console.error('Unknown error:', error);
   }
 }
 ```
 
-## Logging
+## 📝 TypeScript
 
-Metigan includes built-in logging functionality to track API operations.
-
-### Enable/Disable Logging
+The library includes full TypeScript definitions:
 
 ```typescript
-// Disable logging
-metigan.disableLogging();
+import Metigan, {
+  EmailOptions,
+  FormConfig,
+  Contact,
+  Audience,
+  FormFieldType
+} from 'metigan';
 
-// Enable logging
-metigan.enableLogging();
-```
-
-## Best Practices
-
-### 1. Retry Strategy
-
-Metigan automatically retries failed operations. You can customize the retry behavior:
-
-```typescript
-const metigan = new Metigan('your-api-key', {
-  retryCount: 5,     // Increase retries for critical operations
-  retryDelay: 2000   // Longer delay between retries
-});
-```
-
-### 2. Email Validation
-
-Metigan validates email addresses, but you should also validate them in your application:
-
-```typescript
-function isValidEmail(email) {
-  // Simple validation
-  return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
-}
-
-const recipients = userEmails.filter(isValidEmail);
-```
-
-### 3. Template Management
-
-Create reusable templates for common email types:
-
-```typescript
-// Store templates in a central location
-const templates = {
-  welcome: metigan.createTemplate('<h1>Welcome, {{name}}!</h1><p>{{message}}</p>'),
-  passwordReset: metigan.createTemplate('<h1>Password Reset</h1><p>Click <a href="{{resetLink}}">here</a> to reset your password.</p>'),
-  notification: metigan.createTemplate('<h1>{{title}}</h1><p>{{message}}</p>')
+const emailOptions: EmailOptions = {
+  from: 'company@email.com',
+  recipients: ['customer@email.com'],
+  subject: 'Test',
+  content: '<p>Content</p>'
 };
 
-// Use templates as needed
-const welcomeEmail = templates.welcome({
-  name: 'John',
-  message: 'Thank you for joining our platform!'
-});
+const fieldType: FormFieldType = 'email';
 ```
 
-### 4. Contact Management
+## 📄 License
 
-Efficiently manage contacts by batching operations:
+MIT © Metigan
 
-```typescript
-// Batch create contacts
-async function batchCreateContacts(emails, audienceId, batchSize = 100) {
-  const batches = [];
-  for (let i = 0; i < emails.length; i += batchSize) {
-    const batch = emails.slice(i, i + batchSize);
-    batches.push(batch);
-  }
-  
-  const results = [];
-  for (const batch of batches) {
-    try {
-      const result = await metigan.createContacts(batch, {
-        createContact: true,
-        audienceId
-      });
-      results.push(result);
-    } catch (error) {
-      console.error('Error creating contacts batch:', error);
-    }
-  }
-  
-  return results;
-}
-```
+## 🔗 Links
 
-## Type Definitions
-
-Metigan is fully typed with TypeScript. Here are the key type definitions:
-
-```typescript
-// Email options
-interface EmailOptions {
-  from: string;
-  recipients: string[];
-  subject: string;
-  content: string;
-  attachments?: Array<File | NodeAttachment | CustomAttachment>;
-  contactOptions?: ContactCreationOptions;
-  trackingId?: string;
-}
-
-// Template options
-interface TemplateOptions {
-  from: string;
-  recipients: string[];
-  subject: string;
-  templateId: string;
-  templateVariables?: TemplateVariables;
-  attachments?: Array<File | NodeAttachment | CustomAttachment>;
-  contactOptions?: ContactCreationOptions;
-  trackingId?: string;
-}
-
-// Contact creation options
-interface ContactCreationOptions {
-  createContact: boolean;
-  audienceId: string;
-  contactFields?: Record<string, any>;
-}
-
-// Contact query options
-interface ContactQueryOptions {
-  audienceId: string;
-  page?: number;
-  limit?: number;
-  filters?: Record<string, any>;
-}
-
-// Contact update options
-interface ContactUpdateOptions {
-  audienceId: string;
-  fields: Record<string, any>;
-}
-
-// API responses
-interface EmailApiResponse {
-  success: boolean;
-  messageId?: string;
-  error?: string;
-  contactsCreated?: number;
-}
-
-interface ContactApiResponse {
-  success: boolean;
-  contacts?: any[];
-  contact?: any;
-  error?: string;
-  total?: number;
-  page?: number;
-  limit?: number;
-}
-```
-
-## Limitations
-
-- Maximum attachment size: 7MB per file
-- Rate limits: Consult the Metigan API documentation for current rate limits
-- Template variables: Only supports string, number, and boolean values
-
-
-## Troubleshooting
-
-### Common Issues
-
-1. **Authentication Errors**
-
-1. Ensure your API key is correct and active
-2. Check if your account has the necessary permissions
-
-
-
-2. **Email Delivery Issues**
-
-1. Verify recipient email addresses are valid
-2. Check if your sender domain is properly configured
-3. Review email content for spam triggers
-
-
-
-3. **Rate Limiting**
-
-1. Implement exponential backoff for high-volume sending
-2. Distribute sending over time for large batches
-
-
-
-
-
-### Debugging
-
-Enable detailed logging for troubleshooting:
-
-```typescript
-// In Node.js
-process.env.DEBUG = 'metigan:*';
-
-// Then initialize the client
-const metigan = new Metigan('your-api-key');
-```
-
-## Support
-
-For additional support:
-
-- Visit the Metigan documentation website
-- Contact support at [support@metigan.com](mailto:support@metigan.com)
-- Submit issues on GitHub
-
-
-## License
-
-This library is licensed under the MIT License.
+- [Documentation](https://docs.metigan.com)
+- [Dashboard](https://app.metigan.com)
+- [API Reference](https://docs.metigan.com/api)
+- [Examples](https://github.com/metigan/metigan-lib/tree/main/examples)

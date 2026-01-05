@@ -1,21 +1,44 @@
 {
   "name": "metigan",
-  "version": "1.0.0",
-  "description": "Email sending library for the Metigan API",
+  "version": "2.1.2",
+  "description": "Official Metigan SDK - Email, Forms, Contacts, and Audiences management with built-in security features",
   "main": "dist/index.js",
+  "module": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.js"
+    }
+  },
   "scripts": {
     "build": "tsc",
+    "build:prod": "tsc --declaration --declarationMap",
     "test": "jest",
-    "prepublishOnly": "npm run build"
+    "test:coverage": "jest --coverage",
+    "prepublishOnly": "npm run build",
+    "lint": "tsc --noEmit",
+    "typecheck": "tsc --noEmit"
   },
   "keywords": [
     "email",
+    "email-api",
+    "forms",
+    "contacts",
+    "audiences",
+    "marketing",
+    "marketing-automation",
     "api",
     "metigan",
-    "typescript"
+    "typescript",
+    "sdk",
+    "newsletter",
+    "subscribers",
+    "email-sending",
+    "transactional-email"
   ],
-  "author": "",
+  "author": "Metigan <support@metigan.com>",
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.2"
@@ -35,6 +58,7 @@
   "engines": {
     "node": ">=14.0.0"
   },
+  "sideEffects": false,
   "repository": {
     "type": "git",
     "url": "https://github.com/frantchessico/metigan-lib.git"
@@ -42,5 +66,5 @@
   "bugs": {
     "url": "https://github.com/frantchessico/metigan-lib/issues"
   },
-  "homepage": "https://github.com/frantchessico/metigan-lib#readme"
+  "homepage": "https://metigan.com"
 }

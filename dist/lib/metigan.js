@@ -2,7 +2,7 @@
 /**
  * Metigan - Email Sending Library
  * A simple library for sending emails through the Metigan API
- * @version 1.1.0
+ * @version 2.0.0
  */
 var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
     if (k2 === undefined) k2 = k;
@@ -41,14 +41,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.Metigan = exports.MetiganError = void 0;
+exports.BLOCKED_MIME_TYPES = exports.ALLOWED_MIME_TYPES = exports.DebugLogger = exports.RateLimiter = exports.isSafeFileExtension = exports.isAllowedMimeType = exports.sanitizeSubject = exports.sanitizeEmail = exports.sanitizeHtml = exports.Metigan = exports.MetiganError = void 0;
 // Import dependencies in a way that doesn't expose them in stack traces
 const http = __importStar(require("../utils/http"));
 const axios_1 = __importDefault(require("axios"));
-// Private constants
-const API_URL = 'https://metigan-emails-api.savanapoint.com/api/end/email';
-const MAX_FILE_SIZE = 7 * 1024 * 1024; // 7MB in bytes
-const LOG_API_URL = 'https://metigan-emails-api.savanapoint.com/api/logs'; // URL da API de logs
+const config_1 = require("./config");
+const security_1 = require("./security");
 // Status options constants
 const STATUS_OPTIONS = [
     { value: "200", label: "200 - Ok" },
@@ -64,35 +62,47 @@ const STATUS_OPTIONS = [
 ];
 // Valid user agents
 const VALID_USER_AGENTS = ['SDK', 'Webhook', 'SMTP'];
+// Global debug logger instance
+let debugLogger = null;
 /**
- * Logger para monitoramento da biblioteca Metigan
+ * Get or create debug logger instance
+ */
+function getDebugLogger(enabled = false) {
+    if (!debugLogger) {
+        debugLogger = new security_1.DebugLogger(enabled, '[Metigan]');
+    }
+    return debugLogger;
+}
+/**
+ * Logger for Metigan library monitoring
  */
 class MetiganLogger {
-    constructor(apiKey, userId) {
+    constructor(apiKey, userId, debugEnabled = false) {
         this.disabled = false;
-        this.retryCount = 3; // Número de tentativas em caso de falha
-        this.retryDelay = 500; // Delay entre tentativas (ms)
+        this.retryCount = 3; // Number of retry attempts on failure
+        this.retryDelay = 500; // Delay between retries (ms)
         this.pendingLogs = [];
         this.isBatchProcessing = false;
         this.batchTimeout = null;
         this.apiKey = apiKey;
         this.userId = userId;
+        this.debug = getDebugLogger(debugEnabled);
     }
     /**
-     * Desativa o logger
+     * Disables the logger
      */
     disable() {
         this.disabled = true;
         this.clearPendingLogs();
     }
     /**
-     * Ativa o logger
+     * Enables the logger
      */
     enable() {
         this.disabled = false;
     }
     /**
-     * Limpa logs pendentes
+     * Clears pending logs
      */
     clearPendingLogs() {
         this.pendingLogs = [];
@@ -102,13 +112,13 @@ class MetiganLogger {
         }
     }
     /**
-     * Validar e formatar status code para garantir compatibilidade com a API
-     * @param status - Código de status HTTP
-     * @returns Status code válido e seu label
+     * Validate and format status code for API compatibility
+     * @param status - HTTP status code
+     * @returns Valid status code and its label
      * @private
      */
     _validateStatus(status) {
-        // Converter para string e verificar se está na lista de status válidos
+        // Convert to string and check if it's in the valid status list
         const statusStr = status.toString();
         const validStatus = STATUS_OPTIONS.find(option => option.value === statusStr);
         if (validStatus) {
@@ -118,7 +128,7 @@ class MetiganLogger {
             };
         }
         else {
-            // Se não for um status válido, retorna 500 como padrão
+            // If not a valid status, return 500 as default
             const defaultStatus = STATUS_OPTIONS.find(option => option.value === "500");
             return {
                 code: "500",
@@ -127,53 +137,53 @@ class MetiganLogger {
         }
     }
     /**
-     * Determinar o userAgent apropriado
+     * Determine the appropriate userAgent
      * @returns UserAgent string
      */
     _getUserAgent() {
-        // No nosso caso, sempre usamos SDK
+        // In our case, we always use SDK
         return 'SDK';
     }
     /**
-     * Tenta realizar requisição com retentativas
-     * @param url - URL da requisição
-     * @param data - Dados para enviar
-     * @param headers - Cabeçalhos da requisição
+     * Attempts to make a request with retries
+     * @param url - Request URL
+     * @param data - Data to send
+     * @param headers - Request headers
      */
     async _makeRequestWithRetry(url, data, headers) {
         let lastError;
         for (let attempt = 0; attempt < this.retryCount; attempt++) {
             try {
-                return await axios_1.default.post(url, data, { headers, timeout: 5000 }); // Timeout de 5 segundos
+                return await axios_1.default.post(url, data, { headers, timeout: 5000 }); // 5 second timeout
             }
             catch (err) {
                 lastError = err;
-                // Se o erro for 403 (Forbidden), verifica se é problema de autenticação
+                // If error is 403 (Forbidden), check if it's an authentication problem
                 if (err.response && err.response.status === 403) {
-                    // Se for última tentativa, registra o erro silenciosamente
+                    // If last attempt, log the error silently
                     if (attempt === this.retryCount - 1) {
-                        console.warn('Erro de autenticação ao registrar logs. Verifique sua API key.');
-                        return; // Encerra as tentativas
+                        this.debug.warn('Authentication error while logging. Check your API key.');
+                        return; // End attempts
                     }
                 }
-                // Se for erro de rede ou timeout, tenta novamente com mais urgência
+                // If network error or timeout, try again more urgently
                 if (!err.response || err.code === 'ECONNABORTED') {
                     if (attempt === this.retryCount - 1) {
-                        console.warn('Erro de conexão ao registrar logs. Verifique sua conectividade.');
+                        this.debug.warn('Connection error while logging. Check your connectivity.');
                         return;
                     }
                 }
-                // Aguarda antes de tentar novamente (exceto na última tentativa)
+                // Wait before retrying (except on last attempt)
                 if (attempt < this.retryCount - 1) {
-                    await new Promise(resolve => setTimeout(resolve, this.retryDelay * (attempt + 1))); // Backoff exponencial
+                    await new Promise(resolve => setTimeout(resolve, this.retryDelay * (attempt + 1))); // Exponential backoff
                 }
             }
         }
-        // Se chegou aqui, todas as tentativas falharam
+        // If we got here, all attempts failed
         throw lastError;
     }
     /**
-     * Processa o lote de logs pendentes
+     * Processes the pending logs batch
      */
     async processBatch() {
         if (this.disabled || this.pendingLogs.length === 0 || this.isBatchProcessing) {
@@ -182,16 +192,17 @@ class MetiganLogger {
         this.isBatchProcessing = true;
         this.batchTimeout = null;
         try {
-            // Copiar logs pendentes e limpar a fila
+            // Copy pending logs and clear the queue
             const logBatch = [...this.pendingLogs];
             this.pendingLogs = [];
-            // Obter userAgent apropriado
+            // Get appropriate userAgent
             const userAgent = this._getUserAgent();
-            // Preparar lote de logs para envio
+            // Prepare logs batch for sending
             const batchData = logBatch.map(log => {
                 const validatedStatus = this._validateStatus(log.status);
                 return {
                     userId: this.userId,
+                    apiKey: this.apiKey,
                     endpoint: log.endpoint,
                     status: validatedStatus.code,
                     statusLabel: validatedStatus.label,
@@ -200,45 +211,45 @@ class MetiganLogger {
                     timestamp: new Date().toISOString()
                 };
             });
-            // Enviar lote
+            // Send batch
             const headers = {
                 'Content-Type': 'application/json',
                 'x-api-key': this.apiKey,
                 'User-Agent': userAgent
             };
-            await this._makeRequestWithRetry(LOG_API_URL, { logs: batchData }, headers)
+            await this._makeRequestWithRetry(`${config_1.API_URL}/api/logs`, { logs: batchData }, headers)
                 .catch(err => {
-                console.warn('Aviso ao processar lote de logs:', err.message || 'Erro desconhecido');
+                this.debug.warn('Warning processing logs batch:', err.message || 'Unknown error');
             });
         }
         catch (error) {
-            console.warn('Erro ao processar lote de logs:', error.message || 'Erro desconhecido');
+            this.debug.warn('Error processing logs batch:', error.message || 'Unknown error');
         }
         finally {
             this.isBatchProcessing = false;
-            // Verificar se novos logs foram adicionados durante o processamento
+            // Check if new logs were added during processing
             if (this.pendingLogs.length > 0) {
                 this.scheduleBatchProcessing();
             }
         }
     }
     /**
-     * Agenda o processamento do lote de logs
+     * Schedules batch processing
      */
     scheduleBatchProcessing() {
         if (!this.batchTimeout && !this.disabled) {
-            this.batchTimeout = setTimeout(() => this.processBatch(), 1000); // Processa a cada 1 segundo
+            this.batchTimeout = setTimeout(() => this.processBatch(), 1000); // Process every 1 second
         }
     }
     /**
-     * Registra uma operação para ser enviada em lote para a API de logs
+     * Logs an operation to be sent in batch to the logs API
      */
     async log(endpoint, status, method) {
         if (this.disabled)
             return;
-        // Adicionar log à fila
+        // Add log to queue
         this.pendingLogs.push({ endpoint, status, method });
-        // Agendar processamento em lote se necessário
+        // Schedule batch processing if needed
         this.scheduleBatchProcessing();
     }
 }
@@ -269,18 +280,36 @@ class Metigan {
         if (!apiKey) {
             throw new MetiganError('API key is required');
         }
+        // Validate API key format (basic check)
+        if (apiKey.length < 10) {
+            throw new MetiganError('Invalid API key format');
+        }
         this.apiKey = apiKey;
-        // Opções avançadas
-        this.timeout = options.timeout || 30000; // 30 segundos padrão
-        this.retryCount = options.retryCount || 3;
-        this.retryDelay = options.retryDelay || 1000;
-        // Inicializa o logger
+        // Advanced options
+        this.timeout = options.timeout || config_1.DEFAULT_TIMEOUT;
+        this.retryCount = options.retryCount || config_1.DEFAULT_RETRY_COUNT;
+        this.retryDelay = options.retryDelay || config_1.DEFAULT_RETRY_DELAY;
+        // Security options
+        this.debug = getDebugLogger(options.debug || false);
+        this.shouldSanitizeHtml = options.sanitizeHtml !== false; // Default: true
+        // Rate limiting (default: enabled, 10 req/sec)
+        if (options.enableRateLimit !== false) {
+            this.rateLimiter = new security_1.RateLimiter({
+                maxRequests: options.maxRequestsPerSecond || 10,
+                windowMs: 1000
+            });
+        }
+        else {
+            this.rateLimiter = null;
+        }
+        // Initialize logger
         const userId = options.userId || 'anonymous';
-        this.logger = new MetiganLogger(apiKey, userId);
-        // Desativa logs se solicitado
+        this.logger = new MetiganLogger(apiKey, userId, options.debug || false);
+        // Disable logs if requested
         if (options.disableLogs) {
             this.logger.disable();
         }
+        this.debug.log('Metigan client initialized');
     }
     /**
      * Enables logging
@@ -310,7 +339,7 @@ class Metigan {
             return false;
         if (parts[0].length === 0)
             return false;
-        // Verificar parte do domínio
+        // Verify domain part
         const domainParts = parts[1].split('.');
         if (domainParts.length < 2)
             return false;
@@ -411,7 +440,7 @@ class Metigan {
             let mimetype;
             // Handle File objects (browser)
             if (typeof File !== 'undefined' && file instanceof File) {
-                if (file.size > MAX_FILE_SIZE) {
+                if (file.size > config_1.MAX_FILE_SIZE) {
                     throw new MetiganError(`File ${file.name} exceeds the maximum size of 7MB`);
                 }
                 buffer = await file.arrayBuffer();
@@ -421,7 +450,7 @@ class Metigan {
             // Handle Buffer objects (Node.js)
             else if ('buffer' in file && 'originalname' in file) {
                 const nodeFile = file;
-                if (nodeFile.buffer.length > MAX_FILE_SIZE) {
+                if (nodeFile.buffer.length > config_1.MAX_FILE_SIZE) {
                     throw new MetiganError(`File ${nodeFile.originalname} exceeds the maximum size of 7MB`);
                 }
                 buffer = nodeFile.buffer;
@@ -442,7 +471,7 @@ class Metigan {
                 else if (typeof customFile.content === 'string') {
                     contentSize = Buffer.from(customFile.content).length;
                 }
-                if (contentSize > MAX_FILE_SIZE) {
+                if (contentSize > config_1.MAX_FILE_SIZE) {
                     throw new MetiganError(`File ${customFile.filename} exceeds the maximum size of 7MB`);
                 }
                 buffer = customFile.content;
@@ -477,15 +506,55 @@ class Metigan {
         return processedAttachments;
     }
     /**
+     * Validate attachments for security
+     * @param attachments - Array of attachments to validate
+     * @throws MetiganError if validation fails
+     * @private
+     */
+    async _validateAttachments(attachments) {
+        for (const file of attachments) {
+            let filename;
+            let mimetype;
+            // Get filename and mimetype based on file type
+            if (typeof File !== 'undefined' && file instanceof File) {
+                filename = file.name;
+                mimetype = file.type;
+            }
+            else if ('buffer' in file && 'originalname' in file) {
+                const nodeFile = file;
+                filename = nodeFile.originalname;
+                mimetype = nodeFile.mimetype;
+            }
+            else if ('content' in file && 'filename' in file) {
+                const customFile = file;
+                filename = customFile.filename;
+                mimetype = customFile.contentType;
+            }
+            else {
+                throw new MetiganError('Invalid attachment format');
+            }
+            // Validate file extension
+            if (!(0, security_1.isSafeFileExtension)(filename)) {
+                throw new MetiganError(`File extension not allowed for security reasons: ${filename}`);
+            }
+            // Validate MIME type
+            if (mimetype && !(0, security_1.isAllowedMimeType)(mimetype)) {
+                this.debug.warn(`MIME type not in allowlist: ${mimetype} for ${filename}`);
+                // We don't block by MIME type alone, just log warning
+                // The file extension check is the main security gate
+            }
+        }
+    }
+    /**
      * Get MIME type based on file extension
-     * @param filename - Nome do arquivo
+     * @param filename - File name
      * @returns MIME type
      * @private
      */
     _getMimeType(filename) {
         var _a;
         const ext = (_a = filename.split('.').pop()) === null || _a === void 0 ? void 0 : _a.toLowerCase();
-        // Mapeamento básico de extensões para MIME types
+        // Basic mapping of extensions to MIME types
         const mimeMap = {
             'pdf': 'application/pdf',
             'doc': 'application/msword',
@@ -517,11 +586,11 @@ class Metigan {
         return ext && mimeMap[ext] ? mimeMap[ext] : 'application/octet-stream';
     }
     /**
-     * Tenta fazer uma requisição HTTP com sistema de retry
-     * @param url - URL da requisição
-     * @param data - Dados para enviar
-     * @param headers - Cabeçalhos da requisição
-     * @param method - Método HTTP
+     * Attempts HTTP request with retry system
+     * @param url - Request URL
+     * @param data - Data to send
+     * @param headers - Request headers
+     * @param method - HTTP method
      * @private
      */
     async _makeRequestWithRetry(url, data, headers, method = 'POST') {
@@ -537,31 +606,31 @@ class Metigan {
             }
             catch (error) {
                 lastError = error;
-                // Se for erro de autenticação (401/403), podemos tentar novamente um número limitado de vezes
+                // If authentication error (401/403), we can retry a limited number of times
                 if (error.status === 401 || error.status === 403) {
-                    console.warn(`Tentativa ${attempt + 1}/${this.retryCount}: Erro de autenticação (${error.status})`);
+                    this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Authentication error (${error.status})`);
                 }
-                // Se for erro de servidor (5xx), tenta novamente após espera
+                // If server error (5xx), retry after waiting
                 else if (error.status >= 500) {
-                    console.warn(`Tentativa ${attempt + 1}/${this.retryCount}: Erro de servidor (${error.status})`);
+                    this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Server error (${error.status})`);
                 }
-                // Se for erro de rede, também tentamos novamente
+                // If network error, also retry
                 else if (!error.status) {
-                    console.warn(`Tentativa ${attempt + 1}/${this.retryCount}: Erro de rede ou timeout`);
+                    this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Network error or timeout`);
                 }
-                // Se não for último retry, espera antes de tentar novamente
+                // If not last retry, wait before trying again
                 if (attempt < this.retryCount - 1) {
-                    // Backoff exponencial com jitter
+                    // Exponential backoff with jitter
                     const delay = this.retryDelay * Math.pow(2, attempt) * (0.5 + Math.random() * 0.5);
                     await new Promise(resolve => setTimeout(resolve, delay));
                 }
                 else {
-                    // Na última tentativa, propaga o erro
+                    // On last attempt, propagate the error
                     throw error;
                 }
             }
         }
-        // Nunca deveria chegar aqui, mas por segurança
+        // Should never reach here, but just in case
         throw lastError;
     }
     /**
@@ -570,15 +639,33 @@ class Metigan {
      * @returns Response from the API
      */
     async sendEmail(options) {
-        // Início do monitoramento
+        var _a, _b;
+        // Check rate limit
+        if (this.rateLimiter && !this.rateLimiter.tryRequest()) {
+            const waitTime = this.rateLimiter.getTimeUntilNextRequest();
+            throw new MetiganError(`Rate limit exceeded. Please wait ${waitTime}ms before making another request.`);
+        }
+        // Start monitoring
         const startTime = Date.now();
-        let statusCode = 500; // Status padrão para erro
+        let statusCode = 500; // Default error status
         try {
             // Validate message data
             const validation = this._validateMessageData(options);
             if (!validation.isValid) {
                 throw new MetiganError(validation.error || 'Invalid email data');
             }
+            // Sanitize inputs for security
+            const sanitizedOptions = {
+                ...options,
+                from: (0, security_1.sanitizeEmail)(options.from),
+                recipients: options.recipients.map(r => (0, security_1.sanitizeEmail)(r)),
+                subject: (0, security_1.sanitizeSubject)(options.subject),
+                content: this.shouldSanitizeHtml ? (0, security_1.sanitizeHtml)(options.content) : options.content,
+                cc: (_a = options.cc) === null || _a === void 0 ? void 0 : _a.map(c => (0, security_1.sanitizeEmail)(c)),
+                bcc: (_b = options.bcc) === null || _b === void 0 ? void 0 : _b.map(b => (0, security_1.sanitizeEmail)(b)),
+                replyTo: options.replyTo ? (0, security_1.sanitizeEmail)(options.replyTo) : undefined
+            };
+            this.debug.log('Email sanitized and validated');
             // Process attachments if present
             let formData;
             let headers = {
@@ -586,24 +673,26 @@ class Metigan {
                 'User-Agent': 'SDK'
             };
             if (options.attachments && options.attachments.length > 0) {
+                // Validate attachments for security
+                await this._validateAttachments(options.attachments);
                 // If we're in a browser environment
                 if (typeof FormData !== 'undefined') {
                     formData = new FormData();
-                    formData.append('from', options.from);
-                    formData.append('recipients', JSON.stringify(options.recipients));
-                    formData.append('subject', options.subject);
-                    formData.append('content', options.content);
-                    // Adicionar CC se fornecido
-                    if (options.cc && options.cc.length > 0) {
-                        formData.append('cc', JSON.stringify(options.cc));
+                    formData.append('from', sanitizedOptions.from);
+                    formData.append('recipients', JSON.stringify(sanitizedOptions.recipients));
+                    formData.append('subject', sanitizedOptions.subject);
+                    formData.append('content', sanitizedOptions.content);
+                    // Add CC if provided
+                    if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
+                        formData.append('cc', JSON.stringify(sanitizedOptions.cc));
                     }
-                    // Adicionar BCC se fornecido
-                    if (options.bcc && options.bcc.length > 0) {
-                        formData.append('bcc', JSON.stringify(options.bcc));
+                    // Add BCC if provided
+                    if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
+                        formData.append('bcc', JSON.stringify(sanitizedOptions.bcc));
                     }
-                    // Adicionar reply-to se fornecido
-                    if (options.replyTo) {
-                        formData.append('replyTo', options.replyTo);
+                    // Add reply-to if provided
+                    if (sanitizedOptions.replyTo) {
+                        formData.append('replyTo', sanitizedOptions.replyTo);
                     }
                     // Append files directly for browser
                     for (const file of options.attachments) {
@@ -619,23 +708,23 @@ class Metigan {
                 else {
                     const processedAttachments = await this._processAttachments(options.attachments);
                     formData = {
-                        from: options.from,
-                        recipients: options.recipients,
-                        subject: options.subject,
-                        content: options.content,
+                        from: sanitizedOptions.from,
+                        recipients: sanitizedOptions.recipients,
+                        subject: sanitizedOptions.subject,
+                        content: sanitizedOptions.content,
                         attachments: processedAttachments
                     };
-                    // Adicionar CC se fornecido
-                    if (options.cc && options.cc.length > 0) {
-                        formData.cc = options.cc;
+                    // Add CC if provided
+                    if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
+                        formData.cc = sanitizedOptions.cc;
                     }
-                    // Adicionar BCC se fornecido
-                    if (options.bcc && options.bcc.length > 0) {
-                        formData.bcc = options.bcc;
+                    // Add BCC if provided
+                    if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
+                        formData.bcc = sanitizedOptions.bcc;
                     }
-                    // Adicionar reply-to se fornecido
-                    if (options.replyTo) {
-                        formData.replyTo = options.replyTo;
+                    // Add reply-to if provided
+                    if (sanitizedOptions.replyTo) {
+                        formData.replyTo = sanitizedOptions.replyTo;
                     }
                     headers['Content-Type'] = 'application/json';
                 }
@@ -643,30 +732,30 @@ class Metigan {
             // No attachments
             else {
                 formData = {
-                    from: options.from,
-                    recipients: options.recipients,
-                    subject: options.subject,
-                    content: options.content,
+                    from: sanitizedOptions.from,
+                    recipients: sanitizedOptions.recipients,
+                    subject: sanitizedOptions.subject,
+                    content: sanitizedOptions.content,
                 };
-                // Adicionar CC se fornecido
-                if (options.cc && options.cc.length > 0) {
-                    formData.cc = options.cc;
+                // Add CC if provided
+                if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
+                    formData.cc = sanitizedOptions.cc;
                 }
-                // Adicionar BCC se fornecido
-                if (options.bcc && options.bcc.length > 0) {
-                    formData.bcc = options.bcc;
+                // Add BCC if provided
+                if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
+                    formData.bcc = sanitizedOptions.bcc;
                 }
-                // Adicionar reply-to se fornecido
-                if (options.replyTo) {
-                    formData.replyTo = options.replyTo;
+                // Add reply-to if provided
+                if (sanitizedOptions.replyTo) {
+                    formData.replyTo = sanitizedOptions.replyTo;
                 }
                 headers['Content-Type'] = 'application/json';
             }
             // Make the API request with retry
             try {
-                const response = await this._makeRequestWithRetry(API_URL, formData, headers);
+                const response = await this._makeRequestWithRetry(`${config_1.API_URL}/api/email/send`, formData, headers);
                 statusCode = 200; // Sucesso
-                // Log da operação bem-sucedida
+                // Log successful operation
                 await this.logger.log(`/email/send`, statusCode, 'POST');
                 return response;
             }
@@ -675,7 +764,7 @@ class Metigan {
                 if (httpError.status) {
                     statusCode = httpError.status;
                 }
-                // Log da operação com erro
+                // Log failed operation
                 await this.logger.log(`/email/send`, statusCode, 'POST');
                 // Handle HTTP errors without exposing implementation details
                 if (httpError.status) {
@@ -690,7 +779,7 @@ class Metigan {
             }
         }
         catch (error) {
-            // Log da operação com erro
+            // Log error operation
             await this.logger.log(`/email/send/error`, statusCode, 'POST');
             // Rethrow MetiganErrors directly
             if (error instanceof MetiganError) {
@@ -710,7 +799,56 @@ class Metigan {
         const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
         return `mtg-${timestamp}-${random}`;
     }
+    /**
+     * Enable debug mode
+     */
+    enableDebug() {
+        this.debug.enable();
+    }
+    /**
+     * Disable debug mode
+     */
+    disableDebug() {
+        this.debug.disable();
+    }
+    /**
+     * Reset rate limiter (useful for testing)
+     */
+    resetRateLimit() {
+        if (this.rateLimiter) {
+            this.rateLimiter.reset();
+        }
+    }
+    /**
+     * Check if rate limit allows a request
+     * @returns True if request is allowed
+     */
+    canMakeRequest() {
+        if (!this.rateLimiter)
+            return true;
+        return this.rateLimiter.canMakeRequest();
+    }
+    /**
+     * Get time until next request is allowed (in ms)
+     * @returns Milliseconds until next request is allowed, or 0 if allowed now
+     */
+    getTimeUntilNextRequest() {
+        if (!this.rateLimiter)
+            return 0;
+        return this.rateLimiter.getTimeUntilNextRequest();
+    }
 }
 exports.Metigan = Metigan;
+// Export security utilities for advanced users
+var security_2 = require("./security");
+Object.defineProperty(exports, "sanitizeHtml", { enumerable: true, get: function () { return security_2.sanitizeHtml; } });
+Object.defineProperty(exports, "sanitizeEmail", { enumerable: true, get: function () { return security_2.sanitizeEmail; } });
+Object.defineProperty(exports, "sanitizeSubject", { enumerable: true, get: function () { return security_2.sanitizeSubject; } });
+Object.defineProperty(exports, "isAllowedMimeType", { enumerable: true, get: function () { return security_2.isAllowedMimeType; } });
+Object.defineProperty(exports, "isSafeFileExtension", { enumerable: true, get: function () { return security_2.isSafeFileExtension; } });
+Object.defineProperty(exports, "RateLimiter", { enumerable: true, get: function () { return security_2.RateLimiter; } });
+Object.defineProperty(exports, "DebugLogger", { enumerable: true, get: function () { return security_2.DebugLogger; } });
+Object.defineProperty(exports, "ALLOWED_MIME_TYPES", { enumerable: true, get: function () { return security_2.ALLOWED_MIME_TYPES; } });
+Object.defineProperty(exports, "BLOCKED_MIME_TYPES", { enumerable: true, get: function () { return security_2.BLOCKED_MIME_TYPES; } });
 // Default export
 exports.default = Metigan;
