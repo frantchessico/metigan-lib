@@ -35,8 +35,10 @@ export interface EmailOptions {
     recipients: string[];
     /** Email subject */
     subject: string;
-    /** Email content (HTML supported) */
-    content: string;
+    /** Email content (HTML supported) - Required if not using templateId */
+    content?: string;
+    /** Template ID for using pre-created templates (optional) */
+    templateId?: string;
     /** Optional file attachments */
     attachments?: Array<File | NodeAttachment | CustomAttachment>;
     /** Optional CC recipients */

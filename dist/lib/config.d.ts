@@ -12,7 +12,7 @@ export declare const API_URL: string;
 /**
  * SDK Version
  */
-export declare const SDK_VERSION = "2.1.2";
+export declare const SDK_VERSION = "2.2.0";
 /**
  * Default timeout for API requests (in milliseconds)
  */

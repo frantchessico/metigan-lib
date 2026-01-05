@@ -1,21 +1,23 @@
 /**
  * Metigan - Complete Marketing Automation Library
- * Email, Forms, Contacts, and Audiences management
- * @version 2.0.0
+ * Email, Forms, Contacts, Audiences, and Templates management
+ * @version 2.2.0
  */
 export { default as MetiganEmail, Metigan as MetiganEmailClient } from './lib/metigan';
 export { MetiganForms } from './lib/forms';
 export { MetiganContacts } from './lib/contacts';
 export { MetiganAudiences } from './lib/audiences';
+export { MetiganTemplates } from './lib/templates';
 export { MetiganError, ValidationError, ApiError } from './lib/errors';
 export { API_URL, SDK_VERSION, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, MAX_FILE_SIZE } from './lib/config';
 export { sanitizeHtml, sanitizeEmail, sanitizeSubject, isAllowedMimeType, isSafeFileExtension, RateLimiter, DebugLogger, ALLOWED_MIME_TYPES, BLOCKED_MIME_TYPES } from './lib/security';
 export type { RateLimiterConfig } from './lib/security';
-export type { EmailOptions, EmailSuccessResponse, EmailErrorResponse, ApiKeyErrorResponse, EmailApiResponse, NodeAttachment, CustomAttachment, ProcessedAttachment, TemplateVariables, TemplateFunction, ValidationResult, FormFieldType, FormFieldValidation, FormFieldConfig, ButtonCustomization, FormAppearance, FormSettings, FormAnalytics, FormConfig, FormSubmissionData, FormSubmissionOptions, FormSubmissionResponse, FormListResponse, ContactStatus, Contact, CreateContactOptions, UpdateContactOptions, ContactListFilters, ContactListResponse, BulkContactResult, Audience, CreateAudienceOptions, UpdateAudienceOptions, AudienceListResponse, AudienceStats, PaginationOptions, ApiResponse, MetiganClientOptions } from './lib/types';
+export type { EmailOptions, EmailSuccessResponse, EmailErrorResponse, ApiKeyErrorResponse, EmailApiResponse, NodeAttachment, CustomAttachment, ProcessedAttachment, TemplateVariables, TemplateFunction, ValidationResult, FormFieldType, FormFieldValidation, FormFieldConfig, ButtonCustomization, FormAppearance, FormSettings, FormAnalytics, FormConfig, FormSubmissionData, FormSubmissionOptions, FormSubmissionResponse, FormListResponse, ContactStatus, Contact, CreateContactOptions, UpdateContactOptions, ContactListFilters, ContactListResponse, BulkContactResult, Audience, CreateAudienceOptions, UpdateAudienceOptions, AudienceListResponse, AudienceStats, PaginationOptions, ApiResponse, MetiganClientOptions, TemplateComponentStyle, TemplateComponent, TemplateStyles, EmailTemplate, EmailTemplateListResponse, TemplateModuleOptions } from './lib/types';
 import { Metigan as MetiganEmailClientInternal } from './lib/metigan';
 import { MetiganForms } from './lib/forms';
 import { MetiganContacts } from './lib/contacts';
 import { MetiganAudiences } from './lib/audiences';
+import { MetiganTemplates } from './lib/templates';
 import type { MetiganClientOptions } from './lib/types';
 /**
  * Unified Metigan Client
@@ -30,6 +32,8 @@ export declare class Metigan {
     contacts: MetiganContacts;
     /** Audiences module for audience management */
     audiences: MetiganAudiences;
+    /** Templates module for managing email templates */
+    templates: MetiganTemplates;
     /**
      * Create a new Metigan client
      * @param options - Client options

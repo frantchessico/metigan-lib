@@ -1,7 +1,7 @@
 /**
  * Metigan - Complete Marketing Automation Library
- * Email, Forms, Contacts, and Audiences management
- * @version 2.0.0
+ * Email, Forms, Contacts, Audiences, and Templates management
+ * @version 2.2.0
  */
 
 // Export main email class
@@ -11,6 +11,7 @@ export { default as MetiganEmail, Metigan as MetiganEmailClient } from './lib/me
 export { MetiganForms } from './lib/forms';
 export { MetiganContacts } from './lib/contacts';
 export { MetiganAudiences } from './lib/audiences';
+export { MetiganTemplates } from './lib/templates';
 
 // Export errors
 export { MetiganError, ValidationError, ApiError } from './lib/errors';
@@ -80,7 +81,15 @@ export type {
   // Common types
   PaginationOptions,
   ApiResponse,
-  MetiganClientOptions
+  MetiganClientOptions,
+  
+  // Template types
+  TemplateComponentStyle,
+  TemplateComponent,
+  TemplateStyles,
+  EmailTemplate,
+  EmailTemplateListResponse,
+  TemplateModuleOptions
 } from './lib/types';
 
 // Import modules for unified client
@@ -88,6 +97,7 @@ import { Metigan as MetiganEmailClientInternal } from './lib/metigan';
 import { MetiganForms } from './lib/forms';
 import { MetiganContacts } from './lib/contacts';
 import { MetiganAudiences } from './lib/audiences';
+import { MetiganTemplates } from './lib/templates';
 import { MetiganError } from './lib/errors';
 import type { MetiganClientOptions } from './lib/types';
 
@@ -107,6 +117,9 @@ export class Metigan {
   
   /** Audiences module for audience management */
   public audiences: MetiganAudiences;
+  
+  /** Templates module for managing email templates */
+  public templates: MetiganTemplates;
 
   /**
    * Create a new Metigan client
@@ -145,6 +158,13 @@ export class Metigan {
     });
 
     this.audiences = new MetiganAudiences({
+      apiKey: options.apiKey,
+      timeout: options.timeout,
+      retryCount: options.retryCount,
+      retryDelay: options.retryDelay
+    });
+    
+    this.templates = new MetiganTemplates({
       apiKey: options.apiKey,
       timeout: options.timeout,
       retryCount: options.retryCount,
