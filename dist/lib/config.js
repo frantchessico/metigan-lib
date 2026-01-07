@@ -17,7 +17,7 @@ exports.API_URL = (typeof process !== 'undefined' && ((_a = process.env) === nul
 /**
  * SDK Version
  */
-exports.SDK_VERSION = '2.2.0';
+exports.SDK_VERSION = '2.2.1';
 /**
  * Default timeout for API requests (in milliseconds)
  */
