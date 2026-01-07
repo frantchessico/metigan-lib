@@ -1,6 +1,6 @@
 {
   "name": "metigan",
-  "version": "2.2.0",
+  "version": "2.2.1",
   "description": "Official Metigan SDK - Email, Forms, Contacts, and Audiences management with built-in security features",
   "main": "dist/index.js",
   "module": "dist/index.js",

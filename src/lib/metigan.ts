@@ -335,18 +335,15 @@ export interface EmailSuccessResponse {
   success: true;
   message: string;
   successfulEmails: {
-    success: true;
     recipient: string;
-    messageId: string;
+    trackingId: string;
   }[];
   failedEmails: {
-    success: false;
     recipient: string;
     error: string;
   }[];
   recipientCount: number;
-  hasAttachments: boolean;
-  attachmentsCount: number;
+  emailsRemaining: number;
 }
 
 /**
