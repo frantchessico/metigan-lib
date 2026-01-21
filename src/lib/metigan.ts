@@ -17,6 +17,7 @@ import {
   RateLimiter,
   DebugLogger
 } from './security';
+import type { OtpSendOptions, TransactionalSendOptions, OtpSendResponse, TransactionalSendResponse } from './types';
 
 // Status options constants
 const STATUS_OPTIONS = [
@@ -1047,6 +1048,86 @@ export class Metigan {
     const timestamp = Date.now();
     const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
     return `mtg-${timestamp}-${random}`;
+  }
+
+  /**
+   * Send OTP email (fast lane)
+   * @param options - OTP send options
+   */
+  async sendOtp(options: OtpSendOptions): Promise<OtpSendResponse> {
+    const recipient = options.to || options.email;
+    if (!recipient) {
+      throw new MetiganError('Recipient email is required');
+    }
+    if (!options.from) {
+      throw new MetiganError('Sender email (from) is required');
+    }
+    if (!options.code) {
+      throw new MetiganError('OTP code is required');
+    }
+
+    const payload = {
+      ...(options.to ? { to: recipient } : { email: recipient }),
+      from: sanitizeEmail(options.from),
+      code: options.code,
+      appName: options.appName,
+      expiresInMinutes: options.expiresInMinutes,
+      subject: options.subject ? sanitizeSubject(options.subject) : undefined,
+      idempotencyKey: options.idempotencyKey
+    };
+
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
+      'User-Agent': 'SDK',
+      'Content-Type': 'application/json'
+    };
+
+    return await this._makeRequestWithRetry<OtpSendResponse>(
+      `${API_URL}/api/otp/send`,
+      payload,
+      headers
+    );
+  }
+
+  /**
+   * Send transactional email (fast lane)
+   * @param options - Transactional send options
+   */
+  async sendTransactional(options: TransactionalSendOptions): Promise<TransactionalSendResponse> {
+    const recipient = options.to || options.email;
+    if (!recipient) {
+      throw new MetiganError('Recipient email is required');
+    }
+    if (!options.from) {
+      throw new MetiganError('Sender email (from) is required');
+    }
+    if (!options.subject) {
+      throw new MetiganError('Subject is required');
+    }
+    const content = options.content || options.html;
+    if (!content) {
+      throw new MetiganError('Content or html is required');
+    }
+
+    const payload = {
+      ...(options.to ? { to: recipient } : { email: recipient }),
+      from: sanitizeEmail(options.from),
+      subject: sanitizeSubject(options.subject),
+      content: this.shouldSanitizeHtml ? sanitizeHtml(content) : content,
+      idempotencyKey: options.idempotencyKey
+    };
+
+    const headers: Record<string, string> = {
+      'x-api-key': this.apiKey,
+      'User-Agent': 'SDK',
+      'Content-Type': 'application/json'
+    };
+
+    return await this._makeRequestWithRetry<TransactionalSendResponse>(
+      `${API_URL}/api/transactional/send`,
+      payload,
+      headers
+    );
   }
 
   /**

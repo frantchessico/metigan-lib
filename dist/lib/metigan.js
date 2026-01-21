@@ -825,6 +825,70 @@ class Metigan {
         return `mtg-${timestamp}-${random}`;
     }
     /**
+     * Send OTP email (fast lane)
+     * @param options - OTP send options
+     */
+    async sendOtp(options) {
+        const recipient = options.to || options.email;
+        if (!recipient) {
+            throw new MetiganError('Recipient email is required');
+        }
+        if (!options.from) {
+            throw new MetiganError('Sender email (from) is required');
+        }
+        if (!options.code) {
+            throw new MetiganError('OTP code is required');
+        }
+        const payload = {
+            ...(options.to ? { to: recipient } : { email: recipient }),
+            from: (0, security_1.sanitizeEmail)(options.from),
+            code: options.code,
+            appName: options.appName,
+            expiresInMinutes: options.expiresInMinutes,
+            subject: options.subject ? (0, security_1.sanitizeSubject)(options.subject) : undefined,
+            idempotencyKey: options.idempotencyKey
+        };
+        const headers = {
+            'x-api-key': this.apiKey,
+            'User-Agent': 'SDK',
+            'Content-Type': 'application/json'
+        };
+        return await this._makeRequestWithRetry(`${config_1.API_URL}/api/otp/send`, payload, headers);
+    }
+    /**
+     * Send transactional email (fast lane)
+     * @param options - Transactional send options
+     */
+    async sendTransactional(options) {
+        const recipient = options.to || options.email;
+        if (!recipient) {
+            throw new MetiganError('Recipient email is required');
+        }
+        if (!options.from) {
+            throw new MetiganError('Sender email (from) is required');
+        }
+        if (!options.subject) {
+            throw new MetiganError('Subject is required');
+        }
+        const content = options.content || options.html;
+        if (!content) {
+            throw new MetiganError('Content or html is required');
+        }
+        const payload = {
+            ...(options.to ? { to: recipient } : { email: recipient }),
+            from: (0, security_1.sanitizeEmail)(options.from),
+            subject: (0, security_1.sanitizeSubject)(options.subject),
+            content: this.shouldSanitizeHtml ? (0, security_1.sanitizeHtml)(content) : content,
+            idempotencyKey: options.idempotencyKey
+        };
+        const headers = {
+            'x-api-key': this.apiKey,
+            'User-Agent': 'SDK',
+            'Content-Type': 'application/json'
+        };
+        return await this._makeRequestWithRetry(`${config_1.API_URL}/api/transactional/send`, payload, headers);
+    }
+    /**
      * Enable debug mode
      */
     enableDebug() {

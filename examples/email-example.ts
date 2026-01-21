@@ -164,6 +164,43 @@ async function sendTemplateEmail(userData: { name: string; orderNumber: string; 
   }
 }
 
+// Example 6: OTP email (fast lane)
+async function sendOtpEmail() {
+  try {
+    await metigan.email.sendOtp({
+      from: 'My Company <noreply@mycompany.com>',
+      to: 'customer@email.com',
+      code: '384920',
+      appName: 'My Company',
+      expiresInMinutes: 10
+    });
+
+    console.log('OTP email sent!');
+  } catch (error) {
+    console.error('Error sending OTP email:', error);
+  }
+}
+
+// Example 7: Transactional email (fast lane)
+async function sendTransactionalEmail() {
+  try {
+    await metigan.email.sendTransactional({
+      from: 'Billing <billing@mycompany.com>',
+      to: 'customer@email.com',
+      subject: 'Payment received',
+      content: `
+        <p>Hello,</p>
+        <p>Your payment was received successfully.</p>
+        <p>Thank you for your business.</p>
+      `
+    });
+
+    console.log('Transactional email sent!');
+  } catch (error) {
+    console.error('Error sending transactional email:', error);
+  }
+}
+
 // Run examples
 async function main() {
   console.log('=== Metigan Email Examples ===\n');
@@ -183,6 +220,12 @@ async function main() {
     orderNumber: 'ORD-2024-001',
     total: '$299.90'
   });
+
+  console.log('\n5. OTP email...');
+  await sendOtpEmail();
+
+  console.log('\n6. Transactional email...');
+  await sendTransactionalEmail();
 }
 
 main().catch(console.error);

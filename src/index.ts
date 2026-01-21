@@ -37,6 +37,10 @@ export type { RateLimiterConfig } from './lib/security';
 export type {
   // Email types
   EmailOptions,
+  OtpSendOptions,
+  TransactionalSendOptions,
+  OtpSendResponse,
+  TransactionalSendResponse,
   EmailSuccessResponse,
   EmailErrorResponse,
   ApiKeyErrorResponse,

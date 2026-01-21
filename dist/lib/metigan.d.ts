@@ -3,6 +3,7 @@
  * A simple library for sending emails through the Metigan API
  * @version 2.0.0
  */
+import type { OtpSendOptions, TransactionalSendOptions, OtpSendResponse, TransactionalSendResponse } from './types';
 /**
  * Custom error class for Metigan-specific errors
  */
@@ -201,6 +202,16 @@ export declare class Metigan {
      * @private
      */
     private _generateTrackingId;
+    /**
+     * Send OTP email (fast lane)
+     * @param options - OTP send options
+     */
+    sendOtp(options: OtpSendOptions): Promise<OtpSendResponse>;
+    /**
+     * Send transactional email (fast lane)
+     * @param options - Transactional send options
+     */
+    sendTransactional(options: TransactionalSendOptions): Promise<TransactionalSendResponse>;
     /**
      * Enable debug mode
      */
