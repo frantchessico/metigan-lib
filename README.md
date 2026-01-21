@@ -28,6 +28,23 @@ await metigan.email.sendEmail({
   content: '<h1>Hello!</h1><p>Thank you for signing up.</p>'
 });
 
+// Send OTP (fast lane)
+await metigan.email.sendOtp({
+  from: 'Your Company <noreply@yourcompany.com>',
+  to: 'customer@email.com',
+  code: '348921',
+  appName: 'Metigan',
+  expiresInMinutes: 10
+});
+
+// Send transactional email (fast lane)
+await metigan.email.sendTransactional({
+  from: 'Your Company <noreply@yourcompany.com>',
+  to: 'customer@email.com',
+  subject: 'Your receipt',
+  content: '<p>Thanks for your purchase.</p>'
+});
+
 // Submit form
 await metigan.forms.submit({
   formId: 'form-123',
@@ -89,6 +106,29 @@ await metigan.email.sendEmail({
   cc: ['copy@email.com'],
   bcc: ['hidden-copy@email.com'],
   replyTo: 'reply-here@email.com'
+});
+```
+
+### OTP Send (Fast Lane)
+
+```typescript
+await metigan.email.sendOtp({
+  from: 'Your Company <noreply@yourcompany.com>',
+  to: 'user@email.com',
+  code: '482193',
+  appName: 'Metigan',
+  expiresInMinutes: 10
+});
+```
+
+### Transactional Send (Fast Lane)
+
+```typescript
+await metigan.email.sendTransactional({
+  from: 'Your Company <noreply@yourcompany.com>',
+  to: 'user@email.com',
+  subject: 'Password changed',
+  content: '<p>Your password was updated successfully.</p>'
 });
 ```
 
@@ -553,6 +593,8 @@ The library includes full TypeScript definitions:
 ```typescript
 import Metigan, {
   EmailOptions,
+  OtpSendOptions,
+  TransactionalSendOptions,
   FormConfig,
   Contact,
   Audience,
@@ -567,6 +609,19 @@ const emailOptions: EmailOptions = {
 };
 
 const fieldType: FormFieldType = 'email';
+
+const otpOptions: OtpSendOptions = {
+  from: 'company@email.com',
+  to: 'user@email.com',
+  code: '123456'
+};
+
+const transactionalOptions: TransactionalSendOptions = {
+  from: 'company@email.com',
+  to: 'user@email.com',
+  subject: 'Invoice ready',
+  content: '<p>Your invoice is ready.</p>'
+};
 ```
 
 ## 📄 License

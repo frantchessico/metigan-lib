@@ -1,7 +1,7 @@
 {
   "name": "metigan",
-  "version": "2.2.1",
-  "description": "Official Metigan SDK - Email, Forms, Contacts, and Audiences management with built-in security features",
+  "version": "2.3.0",
+  "description": "Official Metigan SDK - Email, OTP, Transactional, Forms, Contacts, and Audiences management with built-in security features",
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
@@ -36,7 +36,8 @@
     "newsletter",
     "subscribers",
     "email-sending",
-    "transactional-email"
+    "transactional-email",
+    "otp"
   ],
   "author": "Metigan <support@metigan.com>",
   "license": "MIT",

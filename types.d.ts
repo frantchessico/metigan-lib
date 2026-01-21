@@ -38,6 +38,68 @@ declare module 'metigan' {
       /** Optional tracking ID for email analytics */
       trackingId?: string;
     }
+
+    /**
+     * OTP send options
+     */
+    export interface OtpSendOptions {
+      /** Recipient email */
+      to?: string;
+      /** Recipient email (alias) */
+      email?: string;
+      /** Sender email address */
+      from: string;
+      /** OTP code */
+      code: string;
+      /** Optional app name */
+      appName?: string;
+      /** Optional expiration in minutes */
+      expiresInMinutes?: number;
+      /** Optional subject */
+      subject?: string;
+      /** Optional idempotency key */
+      idempotencyKey?: string;
+    }
+
+    /**
+     * Transactional send options
+     */
+    export interface TransactionalSendOptions {
+      /** Recipient email */
+      to?: string;
+      /** Recipient email (alias) */
+      email?: string;
+      /** Sender email address */
+      from: string;
+      /** Subject */
+      subject: string;
+      /** HTML content */
+      content?: string;
+      /** HTML content (alias) */
+      html?: string;
+      /** Optional idempotency key */
+      idempotencyKey?: string;
+    }
+
+    /**
+     * OTP send response
+     */
+    export interface OtpSendResponse {
+      success: boolean;
+      message?: string;
+      data?: any;
+      error?: string;
+    }
+
+    /**
+     * Transactional send response
+     */
+    export interface TransactionalSendResponse {
+      success: boolean;
+      message?: string;
+      data?: any;
+      error?: string;
+    }
   
     /**
      * API response interface for successful email
@@ -107,6 +169,20 @@ declare module 'metigan' {
        * @returns Response from the API
        */
       sendEmail(options: EmailOptions): Promise<EmailApiResponse>;
+
+      /**
+       * Send OTP email (fast lane)
+       * @param options - OTP send options
+       * @returns Response from the API
+       */
+      sendOtp(options: OtpSendOptions): Promise<OtpSendResponse>;
+
+      /**
+       * Send transactional email (fast lane)
+       * @param options - Transactional send options
+       * @returns Response from the API
+       */
+      sendTransactional(options: TransactionalSendOptions): Promise<TransactionalSendResponse>;
   
       /**
        * Create an email template with placeholders
