@@ -83,7 +83,9 @@ export class MetiganForms {
           case 'PUT':
             return await http.put<T>(url, data, headers, { timeout: this.timeout });
           case 'DELETE':
-            return await http.del<T>(url, headers, { timeout: this.timeout });
+            // Body and query were dropped on DELETE: removeTags always got
+            // 400 "Tags array is required".
+            return await http.del<T>(url, headers, { timeout: this.timeout, data });
         }
       } catch (error: any) {
         lastError = error;

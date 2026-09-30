@@ -138,7 +138,9 @@ async function del(url, headers, options) {
     try {
         const config = {
             headers,
-            timeout: (options === null || options === void 0 ? void 0 : options.timeout) || 30000
+            timeout: (options === null || options === void 0 ? void 0 : options.timeout) || 30000,
+            params: options === null || options === void 0 ? void 0 : options.params,
+            data: options === null || options === void 0 ? void 0 : options.data
         };
         const response = await axios_1.default.delete(url, config);
         return response.data;

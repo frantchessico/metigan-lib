@@ -20,6 +20,8 @@ export interface HttpError {
 export interface RequestOptions {
   timeout?: number;
   params?: Record<string, any>;
+  /** Request body (DELETE /api/contacts/:id/tags sends the tags in it). */
+  data?: any;
 }
 
 /**
@@ -165,7 +167,9 @@ export async function del<T>(
   try {
     const config: AxiosRequestConfig = { 
       headers,
-      timeout: options?.timeout || 30000
+      timeout: options?.timeout || 30000,
+      params: options?.params,
+      data: options?.data
     };
     const response = await axios.delete(url, config);
     return response.data;

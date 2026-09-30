@@ -16,6 +16,8 @@ export interface HttpError {
 export interface RequestOptions {
     timeout?: number;
     params?: Record<string, any>;
+    /** Request body (DELETE /api/contacts/:id/tags sends the tags in it). */
+    data?: any;
 }
 /**
  * Make a POST request to the specified URL

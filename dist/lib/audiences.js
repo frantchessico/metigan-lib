@@ -89,7 +89,9 @@ class MetiganAudiences {
                     case 'PATCH':
                         return await http.patch(url, data, headers, { timeout: this.timeout });
                     case 'DELETE':
-                        return await http.del(url, headers, { timeout: this.timeout });
+                        // Body and query were dropped on DELETE: removeTags always got
+                        // 400 "Tags array is required".
+                        return await http.del(url, headers, { timeout: this.timeout, data, params });
                 }
             }
             catch (error) {
