@@ -10,12 +10,12 @@
  * Can be overridden with METIGAN_API_URL environment variable for testing
  */
 export const API_URL = (typeof process !== 'undefined' && process.env?.METIGAN_API_URL) 
-  || 'https://api.metigan.com';
+  || 'https://api.metigan.io';
 
 /**
  * SDK Version
  */
-export const SDK_VERSION = '2.2.1';
+export const SDK_VERSION = '2.3.1';
 
 /**
  * Default timeout for API requests (in milliseconds)

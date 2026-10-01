@@ -1,6 +1,6 @@
 {
   "name": "metigan",
-  "version": "2.3.0",
+  "version": "2.3.1",
   "description": "Official Metigan SDK - Email, OTP, Transactional, Forms, Contacts, and Audiences management with built-in security features",
   "main": "dist/index.js",
   "module": "dist/index.js",
@@ -39,7 +39,7 @@
     "transactional-email",
     "otp"
   ],
-  "author": "Metigan <support@metigan.com>",
+  "author": "Metigan <support@metigan.io>",
   "license": "MIT",
   "dependencies": {
     "axios": "^1.6.2"
@@ -67,5 +67,5 @@
   "bugs": {
     "url": "https://github.com/frantchessico/metigan-lib/issues"
   },
-  "homepage": "https://metigan.com"
+  "homepage": "https://metigan.io"
 }

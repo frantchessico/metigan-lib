@@ -630,7 +630,7 @@ MIT © Metigan
 
 ## 🔗 Links
 
-- [Documentation](https://docs.metigan.com)
-- [Dashboard](https://app.metigan.com)
-- [API Reference](https://docs.metigan.com/api)
+- [Documentation](https://docs.metigan.io)
+- [Dashboard](https://app.metigan.io)
+- [API Reference](https://docs.metigan.io/api)
 - [Examples](https://github.com/metigan/metigan-lib/tree/main/examples)

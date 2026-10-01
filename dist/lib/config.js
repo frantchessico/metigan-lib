@@ -13,11 +13,11 @@ exports.MAX_FILE_SIZE = exports.DEFAULT_RETRY_DELAY = exports.DEFAULT_RETRY_COUN
  * Can be overridden with METIGAN_API_URL environment variable for testing
  */
 exports.API_URL = (typeof process !== 'undefined' && ((_a = process.env) === null || _a === void 0 ? void 0 : _a.METIGAN_API_URL))
-    || 'https://api.metigan.com';
+    || 'https://api.metigan.io';
 /**
  * SDK Version
  */
-exports.SDK_VERSION = '2.2.1';
+exports.SDK_VERSION = '2.3.1';
 /**
  * Default timeout for API requests (in milliseconds)
  */
