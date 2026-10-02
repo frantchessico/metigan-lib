@@ -1,1 +1,5 @@
 node_modules
+# Secrets never go to git (the history was purged on 2026-10-02).
+.env
+.env.*
+!.env.example
