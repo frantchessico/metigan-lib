@@ -32,11 +32,15 @@ export class MetiganError extends Error {
    * Error thrown when API request fails
    */
   export class ApiError extends MetiganError {
+    /** HTTP status code of the failed response. */
     status?: number;
-    
-    constructor(message: string, status?: number) {
+    /** Parsed response body of the failed response, when available. */
+    data?: unknown;
+
+    constructor(message: string, status?: number, data?: unknown) {
       super(message);
       this.name = 'ApiError';
       this.status = status;
+      this.data = data;
     }
   }

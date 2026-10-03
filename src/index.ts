@@ -1,7 +1,7 @@
 /**
  * Metigan - Complete Marketing Automation Library
  * Email, Forms, Contacts, Audiences, and Templates management
- * @version 2.2.0
+ * @version 2.4.0
  */
 
 // Export main email class
@@ -136,6 +136,7 @@ export class Metigan {
 
     // Initialize all modules with security options
     this.email = new MetiganEmailClientInternal(options.apiKey, {
+      baseUrl: options.baseUrl,
       userId: options.userId,
       disableLogs: options.disableLogs,
       timeout: options.timeout,
@@ -148,6 +149,7 @@ export class Metigan {
     });
 
     this.forms = new MetiganForms({
+      baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       timeout: options.timeout,
       retryCount: options.retryCount,
@@ -155,6 +157,7 @@ export class Metigan {
     });
 
     this.contacts = new MetiganContacts({
+      baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       timeout: options.timeout,
       retryCount: options.retryCount,
@@ -162,6 +165,7 @@ export class Metigan {
     });
 
     this.audiences = new MetiganAudiences({
+      baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       timeout: options.timeout,
       retryCount: options.retryCount,
@@ -169,6 +173,7 @@ export class Metigan {
     });
     
     this.templates = new MetiganTemplates({
+      baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       timeout: options.timeout,
       retryCount: options.retryCount,

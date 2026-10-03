@@ -1,13 +1,12 @@
 /**
  * Metigan Templates Module
  * Manage email templates created in the Metigan dashboard
- * @version 2.2.0
+ * @version 2.4.0
  */
 
-import * as http from '../utils/http';
-import { API_URL, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY } from './config';
+import { HttpClient, type HttpMethod } from '../core/client';
 import { MetiganError } from './errors';
-import type { 
+import type {
   EmailTemplate, 
   EmailTemplateListResponse, 
   PaginationOptions,
@@ -18,71 +17,14 @@ import type {
  * MetiganTemplates - Manage email templates
  */
 export class MetiganTemplates {
-  private apiKey: string;
-  private timeout: number;
-  private retryCount: number;
-  private retryDelay: number;
+  private http: HttpClient;
 
   constructor(options: TemplateModuleOptions) {
-    if (!options.apiKey) {
-      throw new MetiganError('API key is required');
-    }
-
-    this.apiKey = options.apiKey;
-    this.timeout = options.timeout || DEFAULT_TIMEOUT;
-    this.retryCount = options.retryCount || DEFAULT_RETRY_COUNT;
-    this.retryDelay = options.retryDelay || DEFAULT_RETRY_DELAY;
+    this.http = new HttpClient(options);
   }
 
-  /**
-   * Get default headers for API requests
-   */
-  private getHeaders(): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      'x-api-key': this.apiKey,
-      'User-Agent': 'SDK'
-    };
-  }
-
-  /**
-   * Make HTTP request with retry logic
-   */
-  private async makeRequest<T>(
-    method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
-    url: string,
-    data?: any
-  ): Promise<T> {
-    let lastError;
-    
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
-      try {
-        switch (method) {
-          case 'GET':
-            return await http.get<T>(url, this.getHeaders());
-          case 'POST':
-            return await http.post<T>(url, data, this.getHeaders());
-          case 'PATCH':
-            return await http.patch<T>(url, data, this.getHeaders());
-          case 'DELETE':
-            return await http.del<T>(url, this.getHeaders());
-        }
-      } catch (error: any) {
-        lastError = error;
-        
-        // Don't retry on client errors (4xx)
-        if (error.status >= 400 && error.status < 500) {
-          throw new MetiganError(error.data?.error || error.message || 'Request failed');
-        }
-        
-        // Wait before retrying
-        if (attempt < this.retryCount - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.retryDelay * (attempt + 1)));
-        }
-      }
-    }
-    
-    throw lastError;
+  private makeRequest<T>(method: HttpMethod, endpoint: string, data?: unknown): Promise<T> {
+    return this.http.request<T>(method, endpoint, { body: data });
   }
 
   /**
@@ -102,7 +44,7 @@ export class MetiganTemplates {
     if (options.limit) params.append('limit', options.limit.toString());
     
     const queryString = params.toString();
-    const url = `${API_URL}/api/templates${queryString ? `?${queryString}` : ''}`;
+    const url = `/api/templates${queryString ? `?${queryString}` : ''}`;
     
     return this.makeRequest<EmailTemplateListResponse>('GET', url);
   }
@@ -123,7 +65,7 @@ export class MetiganTemplates {
       throw new MetiganError('Template ID is required');
     }
     
-    const url = `${API_URL}/api/templates/${templateId}`;
+    const url = `/api/templates/${templateId}`;
     return this.makeRequest<EmailTemplate>('GET', url);
   }
 

@@ -1,14 +1,12 @@
 /**
  * Metigan - Email Sending Library
  * A simple library for sending emails through the Metigan API
- * @version 2.0.0
+ * @version 2.4.0
  */
 
-// Import dependencies in a way that doesn't expose them in stack traces
-import * as http from '../utils/http';
-import axios from 'axios';
-import { API_URL, MAX_FILE_SIZE, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY } from './config';
-import { 
+import { HttpClient } from '../core/client';
+import { MAX_FILE_SIZE } from './config';
+import {
   sanitizeHtml, 
   sanitizeEmail, 
   sanitizeSubject, 
@@ -33,9 +31,6 @@ const STATUS_OPTIONS = [
   { value: "500", label: "500 - Internal Server Error" },
 ];
 
-// Valid user agents
-const VALID_USER_AGENTS = ['SDK', 'Webhook', 'SMTP'];
-
 // Global debug logger instance
 let debugLogger: DebugLogger | null = null;
 
@@ -53,17 +48,17 @@ function getDebugLogger(enabled: boolean = false): DebugLogger {
  * Logger for Metigan library monitoring
  */
 class MetiganLogger {
+  private http: HttpClient;
   private apiKey: string;
   private userId: string;
   private disabled: boolean = false;
-  private retryCount: number = 3; // Number of retry attempts on failure
-  private retryDelay: number = 500; // Delay between retries (ms)
   private pendingLogs: Array<{endpoint: string, status: number, method: string}> = [];
   private isBatchProcessing: boolean = false;
-  private batchTimeout: NodeJS.Timeout | null = null;
+  private batchTimeout: ReturnType<typeof setTimeout> | null = null;
   private debug: DebugLogger;
 
-  constructor(apiKey: string, userId: string, debugEnabled: boolean = false) {
+  constructor(http: HttpClient, apiKey: string, userId: string, debugEnabled: boolean = false) {
+    this.http = http;
     this.apiKey = apiKey;
     this.userId = userId;
     this.debug = getDebugLogger(debugEnabled);
@@ -131,49 +126,6 @@ class MetiganLogger {
   }
 
   /**
-   * Attempts to make a request with retries
-   * @param url - Request URL
-   * @param data - Data to send
-   * @param headers - Request headers
-   */
-  private async _makeRequestWithRetry(url: string, data: any, headers: any): Promise<any> {
-    let lastError;
-    
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
-      try {
-        return await axios.post(url, data, { headers, timeout: 5000 }); // 5 second timeout
-      } catch (err: any) {
-        lastError = err;
-        
-        // If error is 403 (Forbidden), check if it's an authentication problem
-        if (err.response && err.response.status === 403) {
-          // If last attempt, log the error silently
-          if (attempt === this.retryCount - 1) {
-            this.debug.warn('Authentication error while logging. Check your API key.');
-            return; // End attempts
-          }
-        }
-        
-        // If network error or timeout, try again more urgently
-        if (!err.response || err.code === 'ECONNABORTED') {
-          if (attempt === this.retryCount - 1) {
-            this.debug.warn('Connection error while logging. Check your connectivity.');
-            return;
-          }
-        }
-        
-        // Wait before retrying (except on last attempt)
-        if (attempt < this.retryCount - 1) {
-          await new Promise(resolve => setTimeout(resolve, this.retryDelay * (attempt + 1))); // Exponential backoff
-        }
-      }
-    }
-    
-    // If we got here, all attempts failed
-    throw lastError;
-  }
-
-  /**
    * Processes the pending logs batch
    */
   private async processBatch(): Promise<void> {
@@ -207,16 +159,11 @@ class MetiganLogger {
         };
       });
 
-      // Send batch
-      const headers = {
-        'Content-Type': 'application/json',
-        'x-api-key': this.apiKey,
-        'User-Agent': userAgent
-      };
-
-      await this._makeRequestWithRetry(`${API_URL}/api/logs`, { logs: batchData }, headers)
-        .catch(err => {
-          this.debug.warn('Warning processing logs batch:', err.message || 'Unknown error');
+      // Send batch (best-effort telemetry: never throws to the caller).
+      await this.http
+        .request('POST', '/api/logs', { body: { logs: batchData }, timeout: 5000 })
+        .catch((err: unknown) => {
+          this.debug.warn('Warning processing logs batch:', (err as Error)?.message || 'Unknown error');
         });
     } catch (error: any) {
       this.debug.warn('Error processing logs batch:', error.message || 'Unknown error');
@@ -381,6 +328,8 @@ export type TemplateFunction = (variables?: TemplateVariables) => string;
  * Metigan client options
  */
 export interface MetiganOptions {
+  /** Override the API base URL (defaults to METIGAN_API_URL or https://api.metigan.io). */
+  baseUrl?: string;
   /** User ID for logging */
   userId?: string;
   /** Disable logging */
@@ -405,11 +354,8 @@ export interface MetiganOptions {
  * Metigan client for sending emails
  */
 export class Metigan {
-  private apiKey: string;
+  private http: HttpClient;
   private logger: MetiganLogger;
-  private timeout: number;
-  private retryCount: number;
-  private retryDelay: number;
   private debug: DebugLogger;
   private shouldSanitizeHtml: boolean;
   private rateLimiter: RateLimiter | null;
@@ -428,14 +374,16 @@ export class Metigan {
     if (apiKey.length < 10) {
       throw new MetiganError('Invalid API key format');
     }
-    
-    this.apiKey = apiKey;
-    
-    // Advanced options
-    this.timeout = options.timeout || DEFAULT_TIMEOUT;
-    this.retryCount = options.retryCount || DEFAULT_RETRY_COUNT;
-    this.retryDelay = options.retryDelay || DEFAULT_RETRY_DELAY;
-    
+
+    // Shared zero-dependency HTTP core (timeout, retries, typed errors).
+    this.http = new HttpClient({
+      apiKey,
+      baseUrl: options.baseUrl,
+      timeout: options.timeout,
+      retryCount: options.retryCount,
+      retryDelay: options.retryDelay,
+    });
+
     // Security options
     this.debug = getDebugLogger(options.debug || false);
     this.shouldSanitizeHtml = options.sanitizeHtml !== false; // Default: true
@@ -452,7 +400,7 @@ export class Metigan {
     
     // Initialize logger
     const userId = options.userId || 'anonymous';
-    this.logger = new MetiganLogger(apiKey, userId, options.debug || false);
+    this.logger = new MetiganLogger(this.http, apiKey, userId, options.debug || false);
     
     // Disable logs if requested
     if (options.disableLogs) {
@@ -768,63 +716,6 @@ export class Metigan {
   }
   
   /**
-   * Attempts HTTP request with retry system
-   * @param url - Request URL
-   * @param data - Data to send
-   * @param headers - Request headers
-   * @param method - HTTP method
-   * @private
-   */
-  private async _makeRequestWithRetry<T>(
-    url: string, 
-    data: any, 
-    headers: Record<string, string>,
-    method: 'GET' | 'POST' = 'POST'
-  ): Promise<T> {
-    let lastError;
-    
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
-      try {
-        if (method === 'GET') {
-          return await http.get<T>(url, headers);
-        } else {
-          return await http.post<T>(url, data, headers);
-        }
-      } catch (error: any) {
-        lastError = error;
-        
-        // If authentication error (401/403), we can retry a limited number of times
-        if (error.status === 401 || error.status === 403) {
-          this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Authentication error (${error.status})`);
-        }
-        
-        // If server error (5xx), retry after waiting
-        else if (error.status >= 500) {
-          this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Server error (${error.status})`);
-        }
-        
-        // If network error, also retry
-        else if (!error.status) {
-          this.debug.warn(`Attempt ${attempt + 1}/${this.retryCount}: Network error or timeout`);
-        }
-        
-        // If not last retry, wait before trying again
-        if (attempt < this.retryCount - 1) {
-          // Exponential backoff with jitter
-          const delay = this.retryDelay * Math.pow(2, attempt) * (0.5 + Math.random() * 0.5);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        } else {
-          // On last attempt, propagate the error
-          throw error;
-        }
-      }
-    }
-    
-    // Should never reach here, but just in case
-    throw lastError;
-  }
-
-  /**
    * Send an email
    * @param options - Email options
    * @returns Response from the API
@@ -836,8 +727,6 @@ export class Metigan {
       throw new MetiganError(`Rate limit exceeded. Please wait ${waitTime}ms before making another request.`);
     }
     
-    // Start monitoring
-    const startTime = Date.now();
     let statusCode = 500; // Default error status
     
     try {
@@ -865,19 +754,25 @@ export class Metigan {
       
       this.debug.log('Email sanitized and validated');
       
-      // Process attachments if present
+      // Build the request body. File/Blob attachments are sent as multipart
+      // form-data; Buffer/base64 attachments (Node) are sent as JSON. The
+      // choice is driven by the attachment type, not by the runtime, so
+      // Node 18+ (which has a global FormData) is handled correctly.
       let formData: any;
-      let headers: Record<string, string> = {
-        'x-api-key': this.apiKey,
-        'User-Agent': 'SDK'
-      };
-      
+      const attachmentsAreFileLike =
+        !!options.attachments &&
+        options.attachments.length > 0 &&
+        options.attachments.every(
+          (a: any) =>
+            (typeof File !== 'undefined' && a instanceof File) ||
+            (typeof Blob !== 'undefined' && a instanceof Blob),
+        );
+
       if (options.attachments && options.attachments.length > 0) {
         // Validate attachments for security
         await this._validateAttachments(options.attachments);
-        
-        // If we're in a browser environment
-        if (typeof FormData !== 'undefined') {
+
+        if (attachmentsAreFileLike) {
           formData = new FormData();
           formData.append('from', sanitizedOptions.from);
           formData.append('recipients', JSON.stringify(sanitizedOptions.recipients));
@@ -906,16 +801,12 @@ export class Metigan {
             formData.append('replyTo', sanitizedOptions.replyTo);
           }
           
-          // Append files directly for browser
-          for (const file of options.attachments) {
-            if (file instanceof File) {
-              formData.append('files', file);
-            } else {
-              throw new MetiganError('In browser environments, attachments must be File objects');
-            }
+          // Append File/Blob attachments directly (browser and Node 18+).
+          for (const file of options.attachments as Array<File | Blob>) {
+            formData.append('files', file, (file as File).name);
           }
-        } 
-        // Node.js environment
+        }
+        // Node.js: send Buffer/base64 attachments as JSON.
         else {
           const processedAttachments = await this._processAttachments(options.attachments);
           
@@ -948,8 +839,6 @@ export class Metigan {
           if (sanitizedOptions.replyTo) {
             formData.replyTo = sanitizedOptions.replyTo;
           }
-          
-          headers['Content-Type'] = 'application/json';
         }
       } 
       // No attachments
@@ -982,13 +871,16 @@ export class Metigan {
         if (sanitizedOptions.replyTo) {
           formData.replyTo = sanitizedOptions.replyTo;
         }
-        
-        headers['Content-Type'] = 'application/json';
       }
       
       // Make the API request with retry
       try {
-        const response = await this._makeRequestWithRetry<EmailApiResponse>(`${API_URL}/api/email/send`, formData, headers);
+        const isMultipart = typeof FormData !== 'undefined' && formData instanceof FormData;
+        const response = await this.http.request<EmailApiResponse>(
+          'POST',
+          '/api/email/send',
+          isMultipart ? { form: formData } : { body: formData },
+        );
         statusCode = 200; // Sucesso
         
         // Log successful operation
@@ -1043,13 +935,6 @@ export class Metigan {
    * @returns A unique tracking ID string
    * @private
    */
-  private _generateTrackingId(): string {
-    // Generate a timestamp-based tracking ID with random component
-    const timestamp = Date.now();
-    const random = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
-    return `mtg-${timestamp}-${random}`;
-  }
-
   /**
    * Send OTP email (fast lane)
    * @param options - OTP send options
@@ -1076,17 +961,7 @@ export class Metigan {
       idempotencyKey: options.idempotencyKey
     };
 
-    const headers: Record<string, string> = {
-      'x-api-key': this.apiKey,
-      'User-Agent': 'SDK',
-      'Content-Type': 'application/json'
-    };
-
-    return await this._makeRequestWithRetry<OtpSendResponse>(
-      `${API_URL}/api/otp/send`,
-      payload,
-      headers
-    );
+    return this.http.request<OtpSendResponse>('POST', '/api/otp/send', { body: payload });
   }
 
   /**
@@ -1117,17 +992,7 @@ export class Metigan {
       idempotencyKey: options.idempotencyKey
     };
 
-    const headers: Record<string, string> = {
-      'x-api-key': this.apiKey,
-      'User-Agent': 'SDK',
-      'Content-Type': 'application/json'
-    };
-
-    return await this._makeRequestWithRetry<TransactionalSendResponse>(
-      `${API_URL}/api/transactional/send`,
-      payload,
-      headers
-    );
+    return this.http.request<TransactionalSendResponse>('POST', '/api/transactional/send', { body: payload });
   }
 
   /**

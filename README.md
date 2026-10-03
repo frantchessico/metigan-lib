@@ -1,636 +1,316 @@
-# Metigan SDK
+# Metigan
 
-The official Metigan library for Node.js and browsers. Send emails, manage forms, contacts, and audiences with ease.
+Official SDK for the [Metigan](https://metigan.io) email platform — send transactional, bulk and OTP email, and manage forms, contacts and audiences.
 
-## 📦 Installation
+- **Zero runtime dependencies.** Built on the platform `fetch`; nothing is pulled into your `node_modules`.
+- **TypeScript-first.** Full type definitions, strict types, editor autocomplete.
+- **Universal.** Works in Node.js (18+), edge runtimes, and browsers (ESM, CommonJS and a standalone `<script>` build).
+- **Resilient by default.** Per-request timeouts, automatic retries for transient failures, and typed errors.
 
 ```bash
 npm install metigan
-# or
-yarn add metigan
 ```
 
-## 🚀 Quick Start
+## Requirements
 
-```typescript
+Node.js **18 or newer** (for the global `fetch`), or any modern browser. On an older Node version, provide a `fetch` polyfill before using the SDK:
+
+```js
+globalThis.fetch = require('undici').fetch;
+```
+
+## Quick start
+
+```ts
 import Metigan from 'metigan';
 
-// Initialize the client with all features
-const metigan = new Metigan({
-  apiKey: 'your-api-key'
-});
+const metigan = new Metigan({ apiKey: process.env.METIGAN_API_KEY! });
 
-// Send email
 await metigan.email.sendEmail({
-  from: 'Your Company <noreply@yourcompany.com>',
-  recipients: ['customer@email.com'],
+  from: 'Acme <noreply@acme.com>',
+  recipients: ['customer@example.com'],
   subject: 'Welcome!',
-  content: '<h1>Hello!</h1><p>Thank you for signing up.</p>'
-});
-
-// Send OTP (fast lane)
-await metigan.email.sendOtp({
-  from: 'Your Company <noreply@yourcompany.com>',
-  to: 'customer@email.com',
-  code: '348921',
-  appName: 'Metigan',
-  expiresInMinutes: 10
-});
-
-// Send transactional email (fast lane)
-await metigan.email.sendTransactional({
-  from: 'Your Company <noreply@yourcompany.com>',
-  to: 'customer@email.com',
-  subject: 'Your receipt',
-  content: '<p>Thanks for your purchase.</p>'
-});
-
-// Submit form
-await metigan.forms.submit({
-  formId: 'form-123',
-  data: {
-    email: 'user@email.com',
-    name: 'John Doe'
-  }
-});
-
-// Create contact
-await metigan.contacts.create({
-  email: 'new@email.com',
-  firstName: 'Jane',
-  audienceId: 'audience-456'
+  content: '<h1>Hello</h1><p>Thanks for signing up.</p>',
 });
 ```
 
-## 📧 Email Module
+> **Keep your API key on the server.** It grants full access to your account. Never ship it in client-side code (see [Browser usage](#browser-usage)).
 
-### Basic Send
+### CommonJS
 
-```typescript
-const response = await metigan.email.sendEmail({
-  from: 'Your Company <noreply@yourcompany.com>',
-  recipients: ['recipient@email.com'],
-  subject: 'Email Subject',
-  content: '<h1>HTML Content</h1>'
+```js
+const { Metigan } = require('metigan');
+const metigan = new Metigan({ apiKey: process.env.METIGAN_API_KEY });
+```
+
+## Configuration
+
+```ts
+const metigan = new Metigan({
+  apiKey: 'mtg_live_...',        // required
+  baseUrl: 'https://api.metigan.io', // optional; or set METIGAN_API_URL
+  timeout: 30000,                // per-request timeout (ms), default 30000
+  retryCount: 3,                 // retries for 5xx/network errors, default 3
+  retryDelay: 1000,              // base backoff (ms), grows exponentially
+  // Email-specific:
+  sanitizeHtml: true,            // strip risky HTML from content (default true)
+  enableRateLimit: true,         // client-side rate limit (default true)
+  maxRequestsPerSecond: 10,      // default 10
+  disableLogs: true,             // disable the SDK's internal usage telemetry
+  debug: false,                  // verbose internal logs
 });
 ```
 
-### With Attachments (Node.js)
+The base URL is resolved in this order: the `baseUrl` option → the `METIGAN_API_URL` environment variable → `https://api.metigan.io`.
 
-```typescript
-import fs from 'fs';
+## Email
 
-const response = await metigan.email.sendEmail({
-  from: 'company@email.com',
-  recipients: ['customer@email.com'],
-  subject: 'Important Document',
-  content: 'Please find the document attached.',
+### Send
+
+```ts
+await metigan.email.sendEmail({
+  from: 'Acme <noreply@acme.com>',
+  recipients: ['a@example.com', 'b@example.com'],
+  subject: 'Monthly update',
+  content: '<h1>News</h1>',
+  cc: ['cc@example.com'],
+  bcc: ['bcc@example.com'],
+  replyTo: 'support@acme.com',
+});
+```
+
+The sender domain must be a domain you have verified in the dashboard (or the shared Metigan sender). The response lists each recipient with a `trackingId`, plus `failedEmails` and your remaining quota.
+
+### Attachments
+
+**Node.js** — pass a buffer, content string or base64:
+
+```ts
+import { readFileSync } from 'node:fs';
+
+await metigan.email.sendEmail({
+  from: 'Acme <billing@acme.com>',
+  recipients: ['customer@example.com'],
+  subject: 'Your invoice',
+  content: 'Attached.',
   attachments: [
-    {
-      buffer: fs.readFileSync('./document.pdf'),
-      originalname: 'document.pdf',
-      mimetype: 'application/pdf'
-    }
-  ]
+    { buffer: readFileSync('./invoice.pdf'), originalname: 'invoice.pdf', mimetype: 'application/pdf' },
+  ],
 });
 ```
 
-### With CC and BCC
+**Browser** — pass `File` or `Blob` objects (e.g. from an `<input type="file">`):
 
-```typescript
+```ts
 await metigan.email.sendEmail({
-  from: 'company@email.com',
-  recipients: ['main@email.com'],
-  subject: 'Meeting',
-  content: 'Email content',
-  cc: ['copy@email.com'],
-  bcc: ['hidden-copy@email.com'],
-  replyTo: 'reply-here@email.com'
+  from: 'Acme <noreply@acme.com>',
+  recipients: ['customer@example.com'],
+  subject: 'Your document',
+  content: 'Attached.',
+  attachments: [fileInput.files[0]], // a File
 });
 ```
 
-### OTP Send (Fast Lane)
+Attachments are validated against an allowlist of MIME types and extensions (max 7 MB each).
 
-```typescript
+### OTP and transactional (fast lane)
+
+Single-recipient OTP and transactional messages take a dedicated low-latency path:
+
+```ts
 await metigan.email.sendOtp({
-  from: 'Your Company <noreply@yourcompany.com>',
-  to: 'user@email.com',
+  from: 'Acme <noreply@acme.com>',
+  to: 'user@example.com',
   code: '482193',
-  appName: 'Metigan',
-  expiresInMinutes: 10
+  appName: 'Acme',
+  expiresInMinutes: 10,
 });
-```
 
-### Transactional Send (Fast Lane)
-
-```typescript
 await metigan.email.sendTransactional({
-  from: 'Your Company <noreply@yourcompany.com>',
-  to: 'user@email.com',
+  from: 'Acme <noreply@acme.com>',
+  to: 'user@example.com',
   subject: 'Password changed',
-  content: '<p>Your password was updated successfully.</p>'
+  content: '<p>Your password was updated.</p>',
+  idempotencyKey: 'pw-reset-8f21', // optional; de-duplicates retries
 });
 ```
 
-## 📋 Forms Module
+## Contacts
 
-### Submit Response
-
-```typescript
-const response = await metigan.forms.submit({
-  formId: 'form-123', // or form slug
-  data: {
-    'field-email': 'user@email.com',
-    'field-name': 'John Doe',
-    'field-message': 'Hello, I would like more information.'
-  }
-});
-
-console.log(response.message); // "Thank you for your submission!"
-```
-
-### Get Public Form
-
-```typescript
-// By slug (for public display)
-const form = await metigan.forms.getPublicForm('my-form');
-
-console.log(form.title);
-console.log(form.fields);
-```
-
-### List Forms
-
-```typescript
-const { forms, pagination } = await metigan.forms.listForms({
-  page: 1,
-  limit: 10
-});
-
-forms.forEach(form => {
-  console.log(`${form.title} - ${form.analytics?.submissions || 0} responses`);
-});
-```
-
-### Create Form
-
-```typescript
-const newForm = await metigan.forms.createForm({
-  title: 'Contact Form',
-  description: 'Get in touch with us',
-  fields: [
-    {
-      id: 'field-email',
-      type: 'email',
-      label: 'Your Email',
-      required: true
-    },
-    {
-      id: 'field-name',
-      type: 'text',
-      label: 'Your Name',
-      required: true
-    },
-    {
-      id: 'field-subject',
-      type: 'select',
-      label: 'Subject',
-      options: ['Support', 'Sales', 'Partnerships']
-    },
-    {
-      id: 'field-message',
-      type: 'textarea',
-      label: 'Message',
-      required: true
-    }
-  ],
-  settings: {
-    successMessage: 'Thank you! We will get back to you soon.',
-    notifyEmail: 'contact@company.com'
-  }
-});
-```
-
-### Publish Form
-
-```typescript
-const { publishedUrl, slug } = await metigan.forms.publishForm('form-123', 'contact');
-console.log(`Form published at: ${publishedUrl}`);
-```
-
-### Form Analytics
-
-```typescript
-const analytics = await metigan.forms.getAnalytics('form-123');
-
-console.log(`Views: ${analytics.views}`);
-console.log(`Submissions: ${analytics.submissions}`);
-console.log(`Conversion rate: ${analytics.conversionRate}%`);
-```
-
-## 👥 Contacts Module
-
-### Create Contact
-
-```typescript
+```ts
 const contact = await metigan.contacts.create({
-  email: 'new@email.com',
+  email: 'jane@example.com',
   firstName: 'Jane',
-  lastName: 'Doe',
-  audienceId: 'audience-123',
-  tags: ['customer', 'newsletter']
+  audienceId: 'aud_123',
+  tags: ['customer'],
 });
-```
 
-### Get Contact
+await metigan.contacts.get(contact.id);
+await metigan.contacts.getByEmail('jane@example.com', 'aud_123');
+await metigan.contacts.update(contact.id, { firstName: 'Jane M.' });
+await metigan.contacts.addTags(contact.id, ['vip']);
+await metigan.contacts.removeTags(contact.id, ['customer']);
+await metigan.contacts.subscribe(contact.id);
+await metigan.contacts.unsubscribe(contact.id);
+await metigan.contacts.delete(contact.id, 'aud_123');
 
-```typescript
-// By ID
-const contact = await metigan.contacts.get('contact-456');
-
-// By email
-const contact = await metigan.contacts.getByEmail('jane@email.com', 'audience-123');
-```
-
-### Update Contact
-
-```typescript
-const updated = await metigan.contacts.update('contact-456', {
-  firstName: 'Jane Marie',
-  tags: ['customer', 'vip']
-});
-```
-
-### Manage Subscription
-
-```typescript
-// Unsubscribe
-await metigan.contacts.unsubscribe('contact-456');
-
-// Resubscribe
-await metigan.contacts.subscribe('contact-456');
-```
-
-### Manage Tags
-
-```typescript
-// Add tags
-await metigan.contacts.addTags('contact-456', ['vip', 'black-friday']);
-
-// Remove tags
-await metigan.contacts.removeTags('contact-456', ['test']);
-```
-
-### List Contacts
-
-```typescript
 const { contacts, pagination } = await metigan.contacts.list({
-  audienceId: 'audience-123',
-  status: 'subscribed',
-  tag: 'customer',
+  audienceId: 'aud_123',
+  status: 'subscribed', // 'subscribed' | 'unsubscribed' | 'bounced' | 'complained'
+  tag: 'vip',
   page: 1,
-  limit: 50
+  limit: 50,
 });
-```
 
-### Bulk Import
+await metigan.contacts.search('jane', 'aud_123');
 
-```typescript
 const result = await metigan.contacts.bulkImport(
-  [
-    { email: 'john@email.com', firstName: 'John' },
-    { email: 'jane@email.com', firstName: 'Jane' },
-    { email: 'peter@email.com', firstName: 'Peter', tags: ['vip'] }
+  [{ email: 'a@example.com', firstName: 'A' }, { email: 'b@example.com' }],
+  'aud_123',
+);
+console.log(result.imported, result.failed);
+```
+
+### Export
+
+`export` is overloaded — `'csv'` resolves the raw CSV text, `'json'` the contacts array:
+
+```ts
+const csv = await metigan.contacts.export('aud_123', 'csv');   // string
+const rows = await metigan.contacts.export('aud_123', 'json'); // Contact[]
+```
+
+## Audiences
+
+```ts
+const audience = await metigan.audiences.create({ name: 'Newsletter' });
+
+await metigan.audiences.get(audience.id);
+await metigan.audiences.update(audience.id, { name: 'Weekly Newsletter' });
+await metigan.audiences.list({ page: 1, limit: 10 });
+await metigan.audiences.getStats(audience.id);   // { total, subscribed, unsubscribed, bounced }
+await metigan.audiences.getCount(audience.id);
+await metigan.audiences.clean(audience.id);       // { removed }
+await metigan.audiences.duplicate(audience.id, 'Copy');
+await metigan.audiences.merge('source_id', 'target_id'); // source is removed
+await metigan.audiences.delete(audience.id);
+```
+
+## Forms
+
+```ts
+// Submit (works with a form id or slug; the submission endpoint is public)
+await metigan.forms.submit({ formId: 'contact', data: { email: 'a@example.com', name: 'A' } });
+
+// Manage
+const form = await metigan.forms.createForm({
+  title: 'Contact',
+  fields: [
+    { id: 'email', type: 'email', label: 'Email', required: true },
+    { id: 'message', type: 'textarea', label: 'Message' },
   ],
-  'audience-123'
-);
-
-console.log(`Imported: ${result.imported}`);
-console.log(`Failed: ${result.failed}`);
-```
-
-### Search Contacts
-
-```typescript
-const results = await metigan.contacts.search('doe', 'audience-123');
-```
-
-## 📊 Audiences Module
-
-### Create Audience
-
-```typescript
-const audience = await metigan.audiences.create({
-  name: 'Main Newsletter',
-  description: 'Main subscriber list'
 });
+const { publishedUrl, slug } = await metigan.forms.publishForm(form.id, 'contact');
+await metigan.forms.getPublicForm(slug);
+await metigan.forms.getAnalytics(form.id); // { views, submissions, conversionRate }
+const { forms } = await metigan.forms.listForms({ page: 1, limit: 10 });
+await metigan.forms.unpublishForm(form.id);
+await metigan.forms.deleteForm(form.id);
 ```
 
-### List Audiences
+## Templates
 
-```typescript
-const { audiences, pagination } = await metigan.audiences.list({
-  page: 1,
-  limit: 10
-});
+```ts
+const { templates } = await metigan.templates.list({ page: 1, limit: 20 });
+const template = await metigan.templates.get('tmpl_123');
 
-audiences.forEach(audience => {
-  console.log(`${audience.name}: ${audience.count} contacts`);
-});
-```
-
-### Audience Statistics
-
-```typescript
-const stats = await metigan.audiences.getStats('audience-123');
-
-console.log(`Total: ${stats.total}`);
-console.log(`Subscribed: ${stats.subscribed}`);
-console.log(`Unsubscribed: ${stats.unsubscribed}`);
-console.log(`Bounced: ${stats.bounced}`);
-```
-
-### Clean Audience
-
-```typescript
-// Remove bounced and unsubscribed contacts
-const { removed } = await metigan.audiences.clean('audience-123');
-console.log(`${removed} contacts removed`);
-```
-
-### Merge Audiences
-
-```typescript
-// Merge source into target (source is deleted)
-const merged = await metigan.audiences.merge(
-  'source-audience-id',
-  'target-audience-id'
-);
-```
-
-## ⚙️ Advanced Configuration
-
-```typescript
-const metigan = new Metigan({
-  apiKey: 'your-api-key',
-  
-  // User ID for logging
-  userId: 'user-123',
-  
-  // Disable logging
-  disableLogs: true,
-  
-  // Timeout in milliseconds
-  timeout: 60000,
-  
-  // Number of retries on failure
-  retryCount: 5,
-  
-  // Delay between retries (ms)
-  retryDelay: 2000,
-  
-  // Security options (see Security section)
-  debug: false,
-  sanitizeHtml: true,
-  enableRateLimit: true,
-  maxRequestsPerSecond: 10
-});
-```
-
-## 🔒 Security Features
-
-The SDK includes built-in security features:
-
-### HTML Sanitization
-
-Automatically removes dangerous HTML tags and attributes from email content to prevent XSS attacks:
-
-```typescript
-// HTML sanitization is enabled by default
-const metigan = new Metigan({
-  apiKey: 'your-api-key',
-  sanitizeHtml: true // default
-});
-
-// Dangerous content is automatically sanitized
+// Use a template when sending:
 await metigan.email.sendEmail({
-  from: 'company@email.com',
-  recipients: ['user@email.com'],
-  subject: 'Newsletter',
-  content: '<h1>Hello</h1><script>alert("xss")</script>' // Script tag will be removed
+  from: 'Acme <noreply@acme.com>',
+  recipients: ['user@example.com'],
+  subject: 'Welcome',
+  templateId: 'tmpl_123',
 });
 ```
 
-### Client-Side Rate Limiting
+## Individual modules
 
-Prevents accidental API abuse with built-in rate limiting:
+Import a single module when you don't need the full client:
 
-```typescript
-const metigan = new Metigan({
-  apiKey: 'your-api-key',
-  enableRateLimit: true, // default
-  maxRequestsPerSecond: 10 // default
-});
+```ts
+import { MetiganForms, MetiganContacts, MetiganAudiences, MetiganTemplates } from 'metigan';
 
-// Check rate limit before making requests
-if (metigan.email.canMakeRequest()) {
-  await metigan.email.sendEmail({...});
-} else {
-  const waitTime = metigan.email.getTimeUntilNextRequest();
-  console.log(`Please wait ${waitTime}ms before next request`);
-}
-
-// Reset rate limiter if needed
-metigan.email.resetRateLimit();
+const forms = new MetiganForms({ apiKey: process.env.METIGAN_API_KEY! });
 ```
 
-### Attachment Validation
+Each module accepts the same `baseUrl`, `timeout`, `retryCount` and `retryDelay` options.
 
-Validates file attachments for security:
+## Error handling
 
-```typescript
-import { isAllowedMimeType, isSafeFileExtension, ALLOWED_MIME_TYPES } from 'metigan';
+Every failure is one of three typed errors:
 
-// Check if file type is safe
-const filename = 'document.pdf';
-const mimetype = 'application/pdf';
+```ts
+import { ValidationError, ApiError, MetiganError } from 'metigan';
 
-if (isSafeFileExtension(filename) && isAllowedMimeType(mimetype)) {
-  // Safe to attach
-}
-
-// View allowed MIME types
-console.log(ALLOWED_MIME_TYPES);
-```
-
-### Email Header Injection Prevention
-
-Email addresses and subjects are automatically sanitized to prevent header injection attacks:
-
-```typescript
-import { sanitizeEmail, sanitizeSubject } from 'metigan';
-
-// Remove newlines and dangerous characters
-const safeEmail = sanitizeEmail('user@email.com\r\nBcc: hacker@evil.com');
-const safeSubject = sanitizeSubject('Subject\r\nFrom: hacker@evil.com');
-```
-
-### Debug Mode
-
-Enable debug mode for troubleshooting (logs are hidden by default in production):
-
-```typescript
-const metigan = new Metigan({
-  apiKey: 'your-api-key',
-  debug: true // Shows internal logs
-});
-
-// Or enable/disable at runtime
-metigan.email.enableDebug();
-metigan.email.disableDebug();
-```
-
-### Custom Rate Limiter
-
-For advanced use cases, you can create your own rate limiter:
-
-```typescript
-import { RateLimiter } from 'metigan';
-
-const limiter = new RateLimiter({
-  maxRequests: 5,
-  windowMs: 1000 // 5 requests per second
-});
-
-if (limiter.tryRequest()) {
-  // Request allowed and recorded
-  await makeApiCall();
-} else {
-  // Rate limited
-  console.log(`Wait ${limiter.getTimeUntilNextRequest()}ms`);
+try {
+  await metigan.email.sendEmail({ /* ... */ });
+} catch (err) {
+  if (err instanceof ValidationError) {
+    // invalid input caught before the request
+  } else if (err instanceof ApiError) {
+    console.error(err.status, err.message, err.data); // the API rejected it
+  } else if (err instanceof MetiganError) {
+    console.error('Network/timeout:', err.message); // couldn't reach the API
+  }
 }
 ```
 
-## 🔧 Using Individual Modules
+`ApiError` (a subclass of `MetiganError`) carries the HTTP `status` and the parsed response `data`. 4xx responses fail immediately; 5xx and network errors are retried up to `retryCount` with exponential backoff before the error is thrown.
 
-If you only need a specific module:
+## Browser usage
 
-```typescript
-import { MetiganForms, MetiganContacts, MetiganAudiences } from 'metigan';
-
-// Forms only
-const forms = new MetiganForms({
-  apiKey: 'your-api-key'
-});
-
-// Contacts only
-const contacts = new MetiganContacts({
-  apiKey: 'your-api-key'
-});
-
-// Audiences only
-const audiences = new MetiganAudiences({
-  apiKey: 'your-api-key'
-});
-```
-
-## 🌐 Browser Usage
+The SDK works in the browser through a bundler (Vite, webpack, esbuild…) with the same `import Metigan from 'metigan'`, or directly via a `<script>` tag:
 
 ```html
-<script src="https://unpkg.com/metigan/dist/index.js"></script>
+<script src="https://unpkg.com/metigan"></script>
 <script>
-  const metigan = new Metigan({ apiKey: 'your-api-key' });
-  
-  // Submit form
-  document.getElementById('my-form').addEventListener('submit', async (e) => {
-    e.preventDefault();
-    
-    const formData = new FormData(e.target);
-    const data = Object.fromEntries(formData);
-    
-    try {
-      const response = await metigan.forms.submit({
-        formId: 'form-123',
-        data
-      });
-      alert(response.message);
-    } catch (error) {
-      alert('Error submitting: ' + error.message);
-    }
-  });
+  const metigan = new Metigan({ /* ... */ });
 </script>
 ```
 
-## 🛡️ Error Handling
+> ⚠️ **Never put your API key in browser code.** It is readable by anyone who loads the page and grants full account access. In the browser, call the Metigan API from your own backend, or use it only for **public form submissions**, which don't require a secret key. For everything else, keep the key server-side.
 
-```typescript
-import { MetiganError, ValidationError, ApiError } from 'metigan';
+## Security
 
-try {
-  await metigan.email.sendEmail({
-    from: 'invalid',
-    recipients: [],
-    subject: '',
-    content: ''
-  });
-} catch (error) {
-  if (error instanceof ValidationError) {
-    console.error('Invalid data:', error.message);
-  } else if (error instanceof ApiError) {
-    console.error(`API error (${error.status}):`, error.message);
-  } else if (error instanceof MetiganError) {
-    console.error('Metigan error:', error.message);
-  } else {
-    console.error('Unknown error:', error);
-  }
-}
-```
+- **Zero dependencies** — no transitive supply-chain surface.
+- **Header-injection protection** — sender, recipients and subject are stripped of CR/LF before sending.
+- **Attachment validation** — MIME type and extension allowlist, size cap.
+- **HTML sanitization** — risky tags/attributes are removed from `content` by default (`sanitizeHtml: false` to opt out). This is a best-effort client-side pass; the Metigan server remains the authority on message content, SPF/DKIM/DMARC alignment and deliverability.
+- **Rate limiting** — a client-side limiter guards against accidental bursts; the server enforces the real limits.
 
-## 📝 TypeScript
+Advanced helpers are exported for direct use: `sanitizeHtml`, `sanitizeEmail`, `sanitizeSubject`, `isAllowedMimeType`, `isSafeFileExtension`, `ALLOWED_MIME_TYPES`, and a standalone `RateLimiter`.
 
-The library includes full TypeScript definitions:
+## TypeScript
 
-```typescript
-import Metigan, {
-  EmailOptions,
-  OtpSendOptions,
-  TransactionalSendOptions,
-  FormConfig,
-  Contact,
-  Audience,
-  FormFieldType
-} from 'metigan';
+Types ship with the package — no `@types` needed:
 
-const emailOptions: EmailOptions = {
-  from: 'company@email.com',
-  recipients: ['customer@email.com'],
-  subject: 'Test',
-  content: '<p>Content</p>'
-};
+```ts
+import Metigan, { EmailOptions, Contact, Audience, FormConfig } from 'metigan';
 
-const fieldType: FormFieldType = 'email';
-
-const otpOptions: OtpSendOptions = {
-  from: 'company@email.com',
-  to: 'user@email.com',
-  code: '123456'
-};
-
-const transactionalOptions: TransactionalSendOptions = {
-  from: 'company@email.com',
-  to: 'user@email.com',
-  subject: 'Invoice ready',
-  content: '<p>Your invoice is ready.</p>'
+const options: EmailOptions = {
+  from: 'Acme <noreply@acme.com>',
+  recipients: ['user@example.com'],
+  subject: 'Hi',
+  content: '<p>Hi</p>',
 };
 ```
 
-## 📄 License
+## License
 
 MIT © Metigan
 
-## 🔗 Links
+## Links
 
 - [Documentation](https://docs.metigan.io)
-- [Dashboard](https://app.metigan.io)
-- [API Reference](https://docs.metigan.io/api)
-- [Examples](https://github.com/metigan/metigan-lib/tree/main/examples)
+- [Dashboard](https://metigan.io)
+- [Issues](https://github.com/frantchessico/metigan-lib/issues)

@@ -1,3 +1,7 @@
+'use strict';
+
+Object.defineProperty(exports, '__esModule', { value: true });
+
 // src/lib/errors.ts
 var MetiganError = class extends Error {
   constructor(message) {
@@ -1823,6 +1827,31 @@ var Metigan2 = class {
 };
 var src_default = Metigan2;
 
-export { ALLOWED_MIME_TYPES, API_URL, ApiError, BLOCKED_MIME_TYPES, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, DebugLogger, MAX_FILE_SIZE, Metigan2 as Metigan, MetiganAudiences, MetiganContacts, metigan_default as MetiganEmail, Metigan as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, RateLimiter, SDK_VERSION, ValidationError, src_default as default, isAllowedMimeType, isSafeFileExtension, sanitizeEmail, sanitizeHtml, sanitizeSubject };
-//# sourceMappingURL=index.js.map
-//# sourceMappingURL=index.js.map
+exports.ALLOWED_MIME_TYPES = ALLOWED_MIME_TYPES;
+exports.API_URL = API_URL;
+exports.ApiError = ApiError;
+exports.BLOCKED_MIME_TYPES = BLOCKED_MIME_TYPES;
+exports.DEFAULT_RETRY_COUNT = DEFAULT_RETRY_COUNT;
+exports.DEFAULT_RETRY_DELAY = DEFAULT_RETRY_DELAY;
+exports.DEFAULT_TIMEOUT = DEFAULT_TIMEOUT;
+exports.DebugLogger = DebugLogger;
+exports.MAX_FILE_SIZE = MAX_FILE_SIZE;
+exports.Metigan = Metigan2;
+exports.MetiganAudiences = MetiganAudiences;
+exports.MetiganContacts = MetiganContacts;
+exports.MetiganEmail = metigan_default;
+exports.MetiganEmailClient = Metigan;
+exports.MetiganError = MetiganError;
+exports.MetiganForms = MetiganForms;
+exports.MetiganTemplates = MetiganTemplates;
+exports.RateLimiter = RateLimiter;
+exports.SDK_VERSION = SDK_VERSION;
+exports.ValidationError = ValidationError;
+exports.default = src_default;
+exports.isAllowedMimeType = isAllowedMimeType;
+exports.isSafeFileExtension = isSafeFileExtension;
+exports.sanitizeEmail = sanitizeEmail;
+exports.sanitizeHtml = sanitizeHtml;
+exports.sanitizeSubject = sanitizeSubject;
+//# sourceMappingURL=index.cjs.map
+//# sourceMappingURL=index.cjs.map

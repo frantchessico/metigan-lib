@@ -1,12 +1,12 @@
 /**
  * Metigan Audiences Module
  * Handles audience/list management
- * @version 2.0.0
+ * @version 2.4.0
  */
 
-import * as http from '../utils/http';
-import { MetiganError, ApiError, ValidationError } from './errors';
-import { API_URL, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY } from './config';
+import { HttpClient, type HttpMethod } from '../core/client';
+import { withId, withIds } from '../core/normalize';
+import { ValidationError } from './errors';
 import type {
   Audience,
   CreateAudienceOptions,
@@ -21,6 +21,8 @@ import type {
  */
 export interface AudiencesModuleOptions {
   apiKey: string;
+  /** Override the API base URL (defaults to METIGAN_API_URL or https://api.metigan.io). */
+  baseUrl?: string;
   timeout?: number;
   retryCount?: number;
   retryDelay?: number;
@@ -30,89 +32,18 @@ export interface AudiencesModuleOptions {
  * MetiganAudiences class for audience operations
  */
 export class MetiganAudiences {
-  private apiKey: string;
-  private timeout: number;
-  private retryCount: number;
-  private retryDelay: number;
+  private http: HttpClient;
 
   /**
    * Create a new MetiganAudiences instance
    * @param options - Audiences module options
    */
   constructor(options: AudiencesModuleOptions) {
-    if (!options.apiKey) {
-      throw new MetiganError('API key is required');
-    }
-
-    this.apiKey = options.apiKey;
-    this.timeout = options.timeout || DEFAULT_TIMEOUT;
-    this.retryCount = options.retryCount || DEFAULT_RETRY_COUNT;
-    this.retryDelay = options.retryDelay || DEFAULT_RETRY_DELAY;
+    this.http = new HttpClient(options);
   }
 
-  /**
-   * Get default headers for API requests
-   */
-  private getHeaders(): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      'x-api-key': this.apiKey,
-      'User-Agent': 'MetiganSDK/2.0'
-    };
-  }
-
-  /**
-   * Make request with retry logic
-   */
-  private async makeRequest<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
-    endpoint: string,
-    data?: any,
-    params?: Record<string, any>
-  ): Promise<T> {
-    const url = `${API_URL}${endpoint}`;
-    const headers = this.getHeaders();
-    let lastError: any;
-
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
-      try {
-        switch (method) {
-          case 'GET':
-            return await http.get<T>(url, headers, { timeout: this.timeout, params });
-          case 'POST':
-            return await http.post<T>(url, data, headers, { timeout: this.timeout });
-          case 'PUT':
-            return await http.put<T>(url, data, headers, { timeout: this.timeout });
-          case 'PATCH':
-            return await http.patch<T>(url, data, headers, { timeout: this.timeout });
-          case 'DELETE':
-            // Body and query were dropped on DELETE: removeTags always got
-            // 400 "Tags array is required".
-            return await http.del<T>(url, headers, { timeout: this.timeout, data, params });
-        }
-      } catch (error: any) {
-        lastError = error;
-
-        // Don't retry on client errors (4xx)
-        if (error.status && error.status >= 400 && error.status < 500) {
-          throw new ApiError(
-            error.data?.message || error.data?.error || `Request failed with status ${error.status}`,
-            error.status
-          );
-        }
-
-        // Wait before retrying
-        if (attempt < this.retryCount - 1) {
-          const delay = this.retryDelay * Math.pow(2, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw new ApiError(
-      lastError?.data?.message || 'Request failed after multiple attempts',
-      lastError?.status
-    );
+  private makeRequest<T>(method: HttpMethod, endpoint: string, data?: unknown, params?: Record<string, unknown>): Promise<T> {
+    return this.http.request<T>(method, endpoint, { body: data, query: params });
   }
 
   /**
@@ -134,7 +65,7 @@ export class MetiganAudiences {
       description: options.description?.trim()
     });
 
-    return response;
+    return withId(response);
   }
 
   /**
@@ -147,8 +78,8 @@ export class MetiganAudiences {
       throw new ValidationError('Audience ID is required');
     }
 
-    const response = await this.makeRequest<Audience>('GET', `/api/audiences/${audienceId}`);
-    return response;
+    const response = await this.makeRequest<Audience>('GET', `/api/audiences/${encodeURIComponent(audienceId)}`);
+    return withId(response);
   }
 
   /**
@@ -168,14 +99,14 @@ export class MetiganAudiences {
 
     const response = await this.makeRequest<Audience>(
       'PATCH',
-      `/api/audiences/${audienceId}`,
+      `/api/audiences/${encodeURIComponent(audienceId)}`,
       {
         name: options.name?.trim(),
         description: options.description?.trim()
       }
     );
 
-    return response;
+    return withId(response);
   }
 
   /**
@@ -215,6 +146,9 @@ export class MetiganAudiences {
     const endpoint = queryString ? `/api/audiences?${queryString}` : '/api/audiences';
 
     const response = await this.makeRequest<AudienceListResponse>('GET', endpoint);
+    if (response && Array.isArray(response.audiences)) {
+      response.audiences = withIds(response.audiences);
+    }
     return response;
   }
 
@@ -282,7 +216,7 @@ export class MetiganAudiences {
       }
     );
 
-    return response;
+    return withId(response);
   }
 
   /**
@@ -302,11 +236,11 @@ export class MetiganAudiences {
 
     const response = await this.makeRequest<Audience>(
       'POST',
-      `/api/audiences/${audienceId}/duplicate`,
+      `/api/audiences/${encodeURIComponent(audienceId)}/duplicate`,
       { name: newName.trim() }
     );
 
-    return response;
+    return withId(response);
   }
 
   /**
@@ -344,7 +278,7 @@ export class MetiganAudiences {
       { q: query }
     );
 
-    return response.audiences;
+    return withIds(response.audiences);
   }
 }
 

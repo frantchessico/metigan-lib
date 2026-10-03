@@ -1,6 +1,6 @@
 /**
  * Type definitions for Metigan library
- * @version 2.0.0
+ * @version 2.4.0
  */
 
 // ============================================
@@ -361,7 +361,7 @@ export interface FormListResponse {
 /**
  * Contact status
  */
-export type ContactStatus = 'subscribed' | 'unsubscribed' | 'pending' | 'bounced' | 'complained';
+export type ContactStatus = 'subscribed' | 'unsubscribed' | 'bounced' | 'complained';
 
 /**
  * Contact data
@@ -528,6 +528,11 @@ export interface ApiResponse<T> {
 export interface MetiganClientOptions {
   /** API Key */
   apiKey: string;
+  /**
+   * Override the API base URL. Defaults to the `METIGAN_API_URL` environment
+   * variable, then `https://api.metigan.io`.
+   */
+  baseUrl?: string;
   /** User ID for logging */
   userId?: string;
   /** Disable logging */
@@ -630,6 +635,8 @@ export interface EmailTemplateListResponse {
  */
 export interface TemplateModuleOptions {
   apiKey: string;
+  /** Override the API base URL (defaults to METIGAN_API_URL or https://api.metigan.io). */
+  baseUrl?: string;
   timeout?: number;
   retryCount?: number;
   retryDelay?: number;

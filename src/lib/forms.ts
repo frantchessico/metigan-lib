@@ -1,12 +1,11 @@
 /**
  * Metigan Forms Module
  * Handles form submissions and form data retrieval
- * @version 2.0.0
+ * @version 2.4.0
  */
 
-import * as http from '../utils/http';
-import { MetiganError, ApiError, ValidationError } from './errors';
-import { API_URL, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY } from './config';
+import { HttpClient, type HttpMethod } from '../core/client';
+import { ValidationError } from './errors';
 import type {
   FormConfig,
   FormSubmissionOptions,
@@ -21,6 +20,8 @@ import type {
  */
 export interface FormsModuleOptions {
   apiKey: string;
+  /** Override the API base URL (defaults to METIGAN_API_URL or https://api.metigan.io). */
+  baseUrl?: string;
   timeout?: number;
   retryCount?: number;
   retryDelay?: number;
@@ -30,86 +31,18 @@ export interface FormsModuleOptions {
  * MetiganForms class for form operations
  */
 export class MetiganForms {
-  private apiKey: string;
-  private timeout: number;
-  private retryCount: number;
-  private retryDelay: number;
+  private http: HttpClient;
 
   /**
    * Create a new MetiganForms instance
    * @param options - Forms module options
    */
   constructor(options: FormsModuleOptions) {
-    if (!options.apiKey) {
-      throw new MetiganError('API key is required');
-    }
-
-    this.apiKey = options.apiKey;
-    this.timeout = options.timeout || DEFAULT_TIMEOUT;
-    this.retryCount = options.retryCount || DEFAULT_RETRY_COUNT;
-    this.retryDelay = options.retryDelay || DEFAULT_RETRY_DELAY;
+    this.http = new HttpClient(options);
   }
 
-  /**
-   * Get default headers for API requests
-   */
-  private getHeaders(): Record<string, string> {
-    return {
-      'Content-Type': 'application/json',
-      'x-api-key': this.apiKey,
-      'User-Agent': 'MetiganSDK/2.0'
-    };
-  }
-
-  /**
-   * Make request with retry logic
-   */
-  private async makeRequest<T>(
-    method: 'GET' | 'POST' | 'PUT' | 'DELETE',
-    endpoint: string,
-    data?: any
-  ): Promise<T> {
-    const url = `${API_URL}${endpoint}`;
-    const headers = this.getHeaders();
-    let lastError: any;
-
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
-      try {
-        switch (method) {
-          case 'GET':
-            return await http.get<T>(url, headers, { timeout: this.timeout });
-          case 'POST':
-            return await http.post<T>(url, data, headers, { timeout: this.timeout });
-          case 'PUT':
-            return await http.put<T>(url, data, headers, { timeout: this.timeout });
-          case 'DELETE':
-            // Body and query were dropped on DELETE: removeTags always got
-            // 400 "Tags array is required".
-            return await http.del<T>(url, headers, { timeout: this.timeout, data });
-        }
-      } catch (error: any) {
-        lastError = error;
-
-        // Don't retry on client errors (4xx)
-        if (error.status && error.status >= 400 && error.status < 500) {
-          throw new ApiError(
-            error.data?.message || error.data?.error || `Request failed with status ${error.status}`,
-            error.status
-          );
-        }
-
-        // Wait before retrying
-        if (attempt < this.retryCount - 1) {
-          const delay = this.retryDelay * Math.pow(2, attempt);
-          await new Promise(resolve => setTimeout(resolve, delay));
-        }
-      }
-    }
-
-    throw new ApiError(
-      lastError?.data?.message || 'Request failed after multiple attempts',
-      lastError?.status
-    );
+  private makeRequest<T>(method: HttpMethod, endpoint: string, data?: unknown): Promise<T> {
+    return this.http.request<T>(method, endpoint, { body: data });
   }
 
   /**
