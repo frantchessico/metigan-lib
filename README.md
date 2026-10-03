@@ -6,6 +6,7 @@ Official SDK for the [Metigan](https://metigan.io) email platform — send trans
 - **TypeScript-first.** Full type definitions, strict types, editor autocomplete.
 - **Universal.** Works in Node.js (18+), edge runtimes, and browsers (ESM, CommonJS and a standalone `<script>` build).
 - **Resilient by default.** Per-request timeouts, automatic retries for transient failures, and typed errors.
+- **Webhooks built in.** Verify signed deliveries and get fully-typed events, with no extra dependencies.
 
 ```bash
 npm install metigan
@@ -58,6 +59,8 @@ const metigan = new Metigan({
   maxRequestsPerSecond: 10,      // default 10
   disableLogs: true,             // disable the SDK's internal usage telemetry
   debug: false,                  // verbose internal logs
+  // Webhooks:
+  webhookSecret: 'whsec_...',    // default secret for client.webhooks.verify (optional)
 });
 ```
 
@@ -233,6 +236,132 @@ await metigan.email.sendEmail({
 });
 ```
 
+## Webhooks
+
+Metigan signs every webhook delivery with HMAC-SHA256 so you can prove it came
+from us and was not modified in transit. `verify` recomputes the signature,
+checks the timestamp against a tolerance window (replay protection), and
+returns the **typed** event — with no extra dependencies, in Node.js, edge
+runtimes and the browser.
+
+Each delivery carries three headers:
+
+| Header | Meaning |
+| --- | --- |
+| `X-Webhook-Signature` | `t=<unix-seconds>,v1=<hex HMAC-SHA256>` |
+| `X-Webhook-Id` | Unique delivery id (safe to dedupe on) |
+| `X-Webhook-Timestamp` | When the event was signed (unix seconds) |
+
+> **Verify against the raw body.** The signature is computed over the exact
+> bytes we send. If you verify a re-serialised object (e.g. `JSON.stringify`
+> of a parsed body), the bytes can differ and verification will fail. Read the
+> raw request body **before** any JSON middleware parses it.
+
+### Express
+
+```ts
+import express from 'express';
+import { verifyWebhook, WebhookSignatureError } from 'metigan';
+
+const app = express();
+
+// express.raw() keeps req.body as the raw Buffer for this route
+app.post('/webhooks/metigan', express.raw({ type: 'application/json' }), async (req, res) => {
+  let event;
+  try {
+    event = await verifyWebhook(req.body, {
+      headers: req.headers,
+      secret: process.env.METIGAN_WEBHOOK_SECRET!,
+    });
+  } catch (err) {
+    if (err instanceof WebhookSignatureError) return res.sendStatus(400);
+    throw err;
+  }
+
+  switch (event.event) {
+    case 'email.delivered':
+      console.log('delivered to', event.data.recipient);
+      break;
+    case 'email.bounced':
+      console.log('bounced:', event.data.metadata.bounceReason);
+      break;
+    case 'email.clicked':
+      console.log('clicked', event.data.metadata.url);
+      break;
+  }
+
+  res.sendStatus(204); // ack fast; do slow work out of band
+});
+```
+
+### Next.js (App Router)
+
+```ts
+import { verifyWebhook, WebhookSignatureError } from 'metigan';
+
+export async function POST(req: Request) {
+  const raw = await req.text(); // the raw body, unparsed
+  try {
+    const event = await verifyWebhook(raw, {
+      headers: req.headers,
+      secret: process.env.METIGAN_WEBHOOK_SECRET!,
+    });
+    // handle event…
+    return new Response(null, { status: 204 });
+  } catch (err) {
+    if (err instanceof WebhookSignatureError) return new Response('invalid', { status: 400 });
+    throw err;
+  }
+}
+```
+
+### From the unified client
+
+```ts
+const metigan = new Metigan({ apiKey, webhookSecret: process.env.METIGAN_WEBHOOK_SECRET });
+const event = await metigan.webhooks.verify(rawBody, { headers });
+```
+
+### Options
+
+```ts
+await verifyWebhook(rawBody, {
+  secret: 'whsec_...',     // required (or set webhookSecret on the client)
+  headers: req.headers,    // case-insensitive; or pass `signature` directly
+  // signature: 't=...,v1=...',
+  toleranceSeconds: 300,   // reject events older/newer than this; 0 disables
+});
+```
+
+`verify` **throws** `WebhookSignatureError` for every failure — a missing or
+malformed signature, a timestamp outside the tolerance window, a mismatch, or
+a non-JSON body. Reject the request (respond `400`) when it throws and never
+read the payload. The error's `reason` (`'no_signature_match'`,
+`'timestamp_out_of_tolerance'`, …) is handy for logs and metrics.
+
+### Events
+
+`event.event` is one of the names below; narrow on it (or use
+`isWebhookEvent(event, 'email.clicked')`) to get a fully-typed `event.data`.
+
+| Event | `data` highlights | Source |
+| --- | --- | --- |
+| `email.sent` | `to`, `from`, `emailId`, `trackingId` | system |
+| `email.delivered` | `recipient`, `metadata.statusDetail` | system |
+| `email.opened` | `recipient`, `metadata.ip`, `metadata.userAgent` | system |
+| `email.clicked` | `recipient`, `metadata.url` | system |
+| `email.bounced` | `recipient`, `metadata.bounceReason` | system |
+| `email.complained` | `recipient` | system |
+| `email.unsubscribed` | `email` | system |
+| `email.failed` | `to`, `reason` | system |
+| `contact.created` | `contactId`, `email`, `audienceId` | system |
+| `contact.deleted` | the contact object | dashboard |
+| `audience.created` · `.updated` · `.deleted` | the audience object | dashboard |
+
+**system** events have a guaranteed shape. **dashboard** events are reported
+when you act in the dashboard and carry the raw object, so treat their fields
+defensively.
+
 ## Individual modules
 
 Import a single module when you don't need the full client:
@@ -266,6 +395,8 @@ try {
 ```
 
 `ApiError` (a subclass of `MetiganError`) carries the HTTP `status` and the parsed response `data`. 4xx responses fail immediately; 5xx and network errors are retried up to `retryCount` with exponential backoff before the error is thrown.
+
+Webhook verification failures raise `WebhookSignatureError` (also a subclass of `MetiganError`); see [Webhooks](#webhooks).
 
 ## Browser usage
 

@@ -474,6 +474,11 @@ interface MetiganClientOptions {
     enableRateLimit?: boolean;
     /** Max requests per second for rate limiting (default: 10) */
     maxRequestsPerSecond?: number;
+    /**
+     * Default webhook signing secret (`whsec_…`) used by `client.webhooks.verify`.
+     * Optional; the secret can also be passed per `verify()` call.
+     */
+    webhookSecret?: string;
 }
 /**
  * Email template component style
@@ -1283,6 +1288,246 @@ declare class ApiError extends MetiganError {
     data?: unknown;
     constructor(message: string, status?: number, data?: unknown);
 }
+/**
+ * Error thrown when an incoming webhook cannot be verified.
+ *
+ * Every failure mode of {@link verifyWebhook} — a missing or malformed
+ * signature header, a timestamp outside the tolerance window, a signature
+ * that does not match, or a body that is not valid JSON — raises this
+ * error. Treat it as "reject the request" (respond 400) and never trust the
+ * payload.
+ */
+declare class WebhookSignatureError extends MetiganError {
+    /** Machine-readable reason, for logging/metrics. */
+    readonly reason: 'missing_secret' | 'missing_signature' | 'invalid_signature_format' | 'timestamp_out_of_tolerance' | 'no_signature_match' | 'invalid_payload' | 'crypto_unavailable';
+    constructor(message: string, reason: WebhookSignatureError['reason']);
+}
+
+/**
+ * Webhook signature verification.
+ *
+ * Metigan signs every webhook delivery so you can prove it came from us and
+ * was not tampered with. This module verifies that signature and returns the
+ * typed event — with **zero runtime dependencies**, using the Web Crypto API
+ * so it runs identically in Node.js (18+), edge runtimes and the browser.
+ *
+ * The signature scheme (sent on every delivery):
+ *
+ *   X-Webhook-Signature: t=<unix-seconds>,v1=<hex HMAC-SHA256(secret, "<t>.<rawBody>")>
+ *   X-Webhook-Id:        <delivery id>
+ *   X-Webhook-Timestamp: <unix-seconds>
+ *
+ * The HMAC key is the signing secret **verbatim** (the literal `whsec_…`
+ * string), and the signed message is the exact bytes of the request body with
+ * the timestamp and a dot prepended. Always verify against the **raw** body:
+ * re-serialising the parsed JSON can change bytes (key order, spacing) and
+ * break the signature.
+ *
+ * @example
+ * ```ts
+ * import { verifyWebhook, WebhookSignatureError } from 'metigan';
+ *
+ * // Express — note express.raw() so req.body is the raw Buffer
+ * app.post('/webhooks', express.raw({ type: 'application/json' }), async (req, res) => {
+ *   try {
+ *     const event = await verifyWebhook(req.body, {
+ *       headers: req.headers,
+ *       secret: process.env.METIGAN_WEBHOOK_SECRET!,
+ *     });
+ *     if (event.event === 'email.bounced') {
+ *       console.log('bounced:', event.data.recipient);
+ *     }
+ *     res.sendStatus(204);
+ *   } catch (err) {
+ *     if (err instanceof WebhookSignatureError) return res.sendStatus(400);
+ *     throw err;
+ *   }
+ * });
+ * ```
+ */
+/** Metadata attached to email engagement events; keys depend on the event. */
+interface EmailEventMetadata {
+    ip?: string;
+    userAgent?: string;
+    device?: string;
+    /** Clicked URL (`email.clicked`). */
+    url?: string;
+    /** Bounce detail (`email.bounced`). */
+    bounceReason?: string;
+    /** Delivery-status fields (`email.delivered`). */
+    dsn?: string;
+    queueId?: string;
+    statusDetail?: string;
+    [key: string]: unknown;
+}
+/** `data` for `email.sent`. */
+interface EmailSentData {
+    to: string;
+    from: string;
+    subject: string;
+    emailId: string;
+    messageId: string;
+    trackingId: string;
+    hasAttachments: boolean;
+    attachmentsCount: number;
+    timestamp: string;
+}
+/** `data` for `email.delivered`, `.opened`, `.clicked`, `.bounced`, `.complained`. */
+interface EmailDeliveryData {
+    recipient: string;
+    subject: string;
+    /** Mirrors the event name without the `email.` prefix (e.g. `"opened"`). */
+    status: string;
+    timestamp: string;
+    metadata: EmailEventMetadata;
+}
+/** `data` for `email.unsubscribed`. */
+interface EmailUnsubscribedData {
+    email: string;
+    timestamp: string;
+}
+/** `data` for `email.failed`. */
+interface EmailFailedData {
+    to: string;
+    emailId: string;
+    reason: string;
+}
+/** `data` for `contact.created`. */
+interface ContactCreatedData {
+    contactId: string;
+    email: string;
+    audienceId: string;
+    userId: string;
+}
+/**
+ * `data` for dashboard-reported events (`audience.*`, `contact.deleted`).
+ * These carry the object the dashboard acted on, so the shape is best-effort
+ * (only `userId` is guaranteed to be the account that owns the webhook).
+ */
+interface DashboardObjectData {
+    _id?: string;
+    name?: string;
+    userId?: string;
+    [key: string]: unknown;
+}
+/** Maps each event name to the type of its `data` field. */
+interface WebhookEventDataMap {
+    'email.sent': EmailSentData;
+    'email.delivered': EmailDeliveryData;
+    'email.opened': EmailDeliveryData;
+    'email.clicked': EmailDeliveryData;
+    'email.bounced': EmailDeliveryData;
+    'email.complained': EmailDeliveryData;
+    'email.unsubscribed': EmailUnsubscribedData;
+    'email.failed': EmailFailedData;
+    'contact.created': ContactCreatedData;
+    'contact.deleted': DashboardObjectData;
+    'audience.created': DashboardObjectData;
+    'audience.updated': DashboardObjectData;
+    'audience.deleted': DashboardObjectData;
+}
+/** Every event name Metigan can deliver. */
+type WebhookEventName = keyof WebhookEventDataMap;
+/** The names as a runtime array (handy for subscribing to "all" events). */
+declare const WEBHOOK_EVENT_NAMES: readonly WebhookEventName[];
+/** A delivered webhook body, parsed. */
+interface WebhookEvent<K extends WebhookEventName = WebhookEventName> {
+    /** Event name, e.g. `"email.delivered"`. */
+    event: K;
+    /** The message/entity the event is about. */
+    messageId: string;
+    /** Event-specific payload (see {@link WebhookEventDataMap}). */
+    data: WebhookEventDataMap[K];
+    /** When Metigan emitted the event, in **milliseconds** since the epoch. */
+    timestamp: number;
+}
+/** The discriminated union of all known events; narrow it on `event`. */
+type AnyWebhookEvent = {
+    [K in WebhookEventName]: WebhookEvent<K>;
+}[WebhookEventName];
+/**
+ * Type guard that narrows a verified event to a specific name.
+ *
+ * @example
+ * ```ts
+ * if (isWebhookEvent(event, 'email.clicked')) {
+ *   console.log(event.data.metadata.url); // fully typed
+ * }
+ * ```
+ */
+declare function isWebhookEvent<K extends WebhookEventName>(event: WebhookEvent, name: K): event is WebhookEvent<K>;
+/** Anything a raw request body can arrive as. */
+type RawBody = string | Uint8Array | ArrayBuffer | ArrayBufferView;
+/** A `Headers`-like object: a `fetch` Headers, a Node `req.headers`, or a Map. */
+type HeadersLike = {
+    get(name: string): string | null | undefined;
+} | Record<string, string | string[] | undefined> | Map<string, string>;
+/** Options for {@link verifyWebhook}. */
+interface VerifyWebhookOptions {
+    /** The signing secret (`whsec_…`) shown once when the webhook was created. */
+    secret?: string;
+    /**
+     * The headers of the incoming request. Lookups are case-insensitive, so a
+     * raw Node `req.headers`, a `fetch` `Headers`, or a plain object all work.
+     * Provide this, or pass {@link signature} directly.
+     */
+    headers?: HeadersLike;
+    /** The `X-Webhook-Signature` value, if you are not passing {@link headers}. */
+    signature?: string;
+    /** The `X-Webhook-Timestamp` value; only needed if the signature omits `t=`. */
+    timestamp?: string | number;
+    /**
+     * Reject events whose timestamp differs from now by more than this many
+     * seconds (replay protection). Default `300` (5 minutes). Set `0` to skip
+     * the timestamp check.
+     */
+    toleranceSeconds?: number;
+    /** Override "now" (unix seconds), for testing. */
+    nowSeconds?: number;
+}
+/**
+ * Verify a webhook signature and return the typed event.
+ *
+ * Throws {@link WebhookSignatureError} for every failure mode (missing/invalid
+ * signature, stale timestamp, mismatch, non-JSON body) — reject the request
+ * when it throws and never read the payload.
+ *
+ * @param rawBody The **exact** request body bytes. Do not re-serialise.
+ * @param options Secret, headers (or raw signature), and tolerance.
+ * @returns The parsed, verified event.
+ */
+declare function verifyWebhook(rawBody: RawBody, options: VerifyWebhookOptions): Promise<AnyWebhookEvent>;
+/** Options for a {@link MetiganWebhooks} instance. */
+interface MetiganWebhooksOptions {
+    /** Default signing secret, overridable per {@link MetiganWebhooks.verify}. */
+    secret?: string;
+    /** Default timestamp tolerance in seconds (default 300). */
+    toleranceSeconds?: number;
+}
+/**
+ * Webhook helpers, exposed as `metigan.webhooks` on the unified client.
+ *
+ * @example
+ * ```ts
+ * const metigan = new Metigan({ apiKey, webhookSecret: process.env.WH_SECRET });
+ * const event = await metigan.webhooks.verify(rawBody, { headers });
+ * ```
+ */
+declare class MetiganWebhooks {
+    private readonly options;
+    /** Every event name Metigan can deliver. */
+    readonly events: readonly WebhookEventName[];
+    constructor(options?: MetiganWebhooksOptions);
+    /**
+     * Verify a webhook signature and return the typed event. The secret and
+     * tolerance fall back to the ones this client was created with.
+     */
+    verify(rawBody: RawBody, options?: Omit<VerifyWebhookOptions, 'secret'> & {
+        secret?: string;
+    }): Promise<AnyWebhookEvent>;
+    /** Narrow a verified event to a specific name (re-export of {@link isWebhookEvent}). */
+    is<K extends WebhookEventName>(event: WebhookEvent, name: K): event is WebhookEvent<K>;
+}
 
 /**
  * Metigan Library Configuration
@@ -1298,7 +1543,7 @@ declare const API_URL: string;
 /**
  * SDK Version
  */
-declare const SDK_VERSION = "2.4.0";
+declare const SDK_VERSION = "2.5.0";
 /**
  * Default timeout for API requests (in milliseconds)
  */
@@ -1316,7 +1561,7 @@ declare const MAX_FILE_SIZE: number;
 /**
  * Metigan - Complete Marketing Automation Library
  * Email, Forms, Contacts, Audiences, and Templates management
- * @version 2.4.0
+ * @version 2.5.0
  */
 
 /**
@@ -1334,6 +1579,8 @@ declare class Metigan {
     audiences: MetiganAudiences;
     /** Templates module for managing email templates */
     templates: MetiganTemplates;
+    /** Webhooks module for verifying incoming webhook signatures */
+    webhooks: MetiganWebhooks;
     /**
      * Create a new Metigan client
      * @param options - Client options
@@ -1341,4 +1588,4 @@ declare class Metigan {
     constructor(options: MetiganClientOptions);
 }
 
-export { ALLOWED_MIME_TYPES, API_URL, ApiError, type ApiKeyErrorResponse$1 as ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment$1 as CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, DebugLogger, type EmailApiResponse$1 as EmailApiResponse, type EmailErrorResponse$1 as EmailErrorResponse, type EmailOptions$1 as EmailOptions, type EmailSuccessResponse$1 as EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, type NodeAttachment$1 as NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, RateLimiter, type RateLimiterConfig, SDK_VERSION, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, Metigan as default, isAllowedMimeType, isSafeFileExtension, sanitizeEmail, sanitizeHtml, sanitizeSubject };
+export { ALLOWED_MIME_TYPES, API_URL, type AnyWebhookEvent, ApiError, type ApiKeyErrorResponse$1 as ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactCreatedData, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment$1 as CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, type DashboardObjectData, DebugLogger, type EmailApiResponse$1 as EmailApiResponse, type EmailDeliveryData, type EmailErrorResponse$1 as EmailErrorResponse, type EmailEventMetadata, type EmailFailedData, type EmailOptions$1 as EmailOptions, type EmailSentData, type EmailSuccessResponse$1 as EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type EmailUnsubscribedData, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, type HeadersLike, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, MetiganWebhooks, type MetiganWebhooksOptions, type NodeAttachment$1 as NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, RateLimiter, type RateLimiterConfig, type RawBody, SDK_VERSION, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, type VerifyWebhookOptions, WEBHOOK_EVENT_NAMES, type WebhookEvent, type WebhookEventDataMap, type WebhookEventName, WebhookSignatureError, Metigan as default, isAllowedMimeType, isSafeFileExtension, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };

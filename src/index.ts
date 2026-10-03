@@ -1,7 +1,7 @@
 /**
  * Metigan - Complete Marketing Automation Library
  * Email, Forms, Contacts, Audiences, and Templates management
- * @version 2.4.0
+ * @version 2.5.0
  */
 
 // Export main email class
@@ -14,7 +14,32 @@ export { MetiganAudiences } from './lib/audiences';
 export { MetiganTemplates } from './lib/templates';
 
 // Export errors
-export { MetiganError, ValidationError, ApiError } from './lib/errors';
+export { MetiganError, ValidationError, ApiError, WebhookSignatureError } from './lib/errors';
+
+// Export webhook verification
+export {
+  MetiganWebhooks,
+  verifyWebhook,
+  isWebhookEvent,
+  WEBHOOK_EVENT_NAMES,
+} from './lib/webhooks';
+export type {
+  WebhookEvent,
+  AnyWebhookEvent,
+  WebhookEventName,
+  WebhookEventDataMap,
+  VerifyWebhookOptions,
+  MetiganWebhooksOptions,
+  RawBody,
+  HeadersLike,
+  EmailEventMetadata,
+  EmailSentData,
+  EmailDeliveryData,
+  EmailUnsubscribedData,
+  EmailFailedData,
+  ContactCreatedData,
+  DashboardObjectData,
+} from './lib/webhooks';
 
 // Export configuration constants
 export { API_URL, SDK_VERSION, DEFAULT_TIMEOUT, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, MAX_FILE_SIZE } from './lib/config';
@@ -102,6 +127,7 @@ import { MetiganForms } from './lib/forms';
 import { MetiganContacts } from './lib/contacts';
 import { MetiganAudiences } from './lib/audiences';
 import { MetiganTemplates } from './lib/templates';
+import { MetiganWebhooks } from './lib/webhooks';
 import { MetiganError } from './lib/errors';
 import type { MetiganClientOptions } from './lib/types';
 
@@ -124,6 +150,9 @@ export class Metigan {
   
   /** Templates module for managing email templates */
   public templates: MetiganTemplates;
+
+  /** Webhooks module for verifying incoming webhook signatures */
+  public webhooks: MetiganWebhooks;
 
   /**
    * Create a new Metigan client
@@ -178,6 +207,12 @@ export class Metigan {
       timeout: options.timeout,
       retryCount: options.retryCount,
       retryDelay: options.retryDelay
+    });
+
+    // Webhook verification needs no API key or network — only the signing
+    // secret, which is optional here and can be passed per verify() call.
+    this.webhooks = new MetiganWebhooks({
+      secret: options.webhookSecret,
     });
   }
 }

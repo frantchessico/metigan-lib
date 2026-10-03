@@ -22,10 +22,17 @@ var ApiError = class extends MetiganError {
     this.data = data;
   }
 };
+var WebhookSignatureError = class extends MetiganError {
+  constructor(message, reason) {
+    super(message);
+    this.name = "WebhookSignatureError";
+    this.reason = reason;
+  }
+};
 
 // src/lib/config.ts
 var API_URL = typeof process !== "undefined" && process.env?.METIGAN_API_URL || "https://api.metigan.io";
-var SDK_VERSION = "2.4.0";
+var SDK_VERSION = "2.5.0";
 var DEFAULT_TIMEOUT = 3e4;
 var DEFAULT_RETRY_COUNT = 3;
 var DEFAULT_RETRY_DELAY = 1e3;
@@ -1769,6 +1776,248 @@ var MetiganTemplates = class {
   }
 };
 
+// src/lib/webhooks.ts
+var WEBHOOK_EVENT_NAMES = [
+  "email.sent",
+  "email.delivered",
+  "email.opened",
+  "email.clicked",
+  "email.bounced",
+  "email.complained",
+  "email.unsubscribed",
+  "email.failed",
+  "contact.created",
+  "contact.deleted",
+  "audience.created",
+  "audience.updated",
+  "audience.deleted"
+];
+function isWebhookEvent(event, name) {
+  return event.event === name;
+}
+var DEFAULT_TOLERANCE_SECONDS = 300;
+var encoder = new TextEncoder();
+async function verifyWebhook(rawBody, options) {
+  const secret = options.secret;
+  if (!secret) {
+    throw new WebhookSignatureError(
+      "A signing secret is required to verify the webhook.",
+      "missing_secret"
+    );
+  }
+  const signatureHeader = options.signature ?? getHeader(options.headers, "x-webhook-signature");
+  if (!signatureHeader) {
+    throw new WebhookSignatureError(
+      "Missing the X-Webhook-Signature header.",
+      "missing_signature"
+    );
+  }
+  const parsed = parseSignatureHeader(signatureHeader);
+  const headerTs = options.timestamp ?? getHeader(options.headers, "x-webhook-timestamp");
+  const timestamp = parsed.timestamp ?? toNumber(headerTs);
+  if (parsed.signatures.length === 0) {
+    throw new WebhookSignatureError(
+      "The X-Webhook-Signature header has no v1 signature.",
+      "invalid_signature_format"
+    );
+  }
+  const tolerance = options.toleranceSeconds ?? DEFAULT_TOLERANCE_SECONDS;
+  if (tolerance > 0) {
+    if (timestamp === void 0) {
+      throw new WebhookSignatureError(
+        "The signature has no timestamp; cannot enforce the tolerance window.",
+        "invalid_signature_format"
+      );
+    }
+    const now = options.nowSeconds ?? Math.floor(Date.now() / 1e3);
+    if (Math.abs(now - timestamp) > tolerance) {
+      throw new WebhookSignatureError(
+        "The webhook timestamp is outside the tolerance window.",
+        "timestamp_out_of_tolerance"
+      );
+    }
+  }
+  const bodyBytes = toBytes(rawBody);
+  const signedTs = parsed.timestamp ?? timestamp;
+  if (signedTs === void 0) {
+    throw new WebhookSignatureError(
+      "The signature has no timestamp to verify against.",
+      "invalid_signature_format"
+    );
+  }
+  const expected = await hmacSha256Hex(secret, signedTs, bodyBytes);
+  const matched = parsed.signatures.some(
+    (candidate) => constantTimeEqual(candidate, expected)
+  );
+  if (!matched) {
+    throw new WebhookSignatureError(
+      "No signature in the header matched the computed signature.",
+      "no_signature_match"
+    );
+  }
+  let event;
+  try {
+    event = JSON.parse(bytesToUtf8(bodyBytes));
+  } catch {
+    throw new WebhookSignatureError(
+      "The webhook body is not valid JSON.",
+      "invalid_payload"
+    );
+  }
+  if (!event || typeof event !== "object" || typeof event.event !== "string") {
+    throw new WebhookSignatureError(
+      "The webhook body is not a Metigan event.",
+      "invalid_payload"
+    );
+  }
+  return event;
+}
+var MetiganWebhooks = class {
+  constructor(options = {}) {
+    this.options = options;
+    /** Every event name Metigan can deliver. */
+    this.events = WEBHOOK_EVENT_NAMES;
+  }
+  /**
+   * Verify a webhook signature and return the typed event. The secret and
+   * tolerance fall back to the ones this client was created with.
+   */
+  verify(rawBody, options = {}) {
+    return verifyWebhook(rawBody, {
+      ...options,
+      secret: options.secret ?? this.options.secret,
+      toleranceSeconds: options.toleranceSeconds ?? this.options.toleranceSeconds
+    });
+  }
+  /** Narrow a verified event to a specific name (re-export of {@link isWebhookEvent}). */
+  is(event, name) {
+    return isWebhookEvent(event, name);
+  }
+};
+function parseSignatureHeader(header) {
+  const out = { signatures: [] };
+  const tokens = header.split(/[\s,]+/).filter(Boolean);
+  let sawScheme = false;
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq === -1) continue;
+    const key = token.slice(0, eq);
+    const value = token.slice(eq + 1);
+    if (key === "t") {
+      sawScheme = true;
+      const n = toNumber(value);
+      if (n !== void 0) out.timestamp = n;
+    } else if (key === "v1") {
+      sawScheme = true;
+      if (value) out.signatures.push(value.toLowerCase());
+    }
+  }
+  if (!sawScheme && /^[0-9a-f]+$/i.test(header.trim())) {
+    out.signatures.push(header.trim().toLowerCase());
+  }
+  return out;
+}
+async function hmacSha256Hex(secret, timestamp, body) {
+  const subtle = await getSubtle();
+  const prefix = encoder.encode(`${timestamp}.`);
+  const message = concatBytes(prefix, body);
+  const key = await subtle.importKey(
+    "raw",
+    encoder.encode(secret),
+    { name: "HMAC", hash: "SHA-256" },
+    false,
+    ["sign"]
+  );
+  const signature = await subtle.sign("HMAC", key, message);
+  return bufferToHex(signature);
+}
+var cachedSubtle;
+async function getSubtle() {
+  if (cachedSubtle) return cachedSubtle;
+  const g = typeof globalThis !== "undefined" ? globalThis : {};
+  if (g.crypto?.subtle) {
+    cachedSubtle = g.crypto.subtle;
+    return cachedSubtle;
+  }
+  try {
+    const nodeCrypto = await import('crypto');
+    if (nodeCrypto?.webcrypto?.subtle) {
+      cachedSubtle = nodeCrypto.webcrypto.subtle;
+      return cachedSubtle;
+    }
+  } catch {
+  }
+  throw new WebhookSignatureError(
+    "The Web Crypto API is not available in this runtime.",
+    "crypto_unavailable"
+  );
+}
+function toBytes(body) {
+  if (typeof body === "string") return encoder.encode(body);
+  if (body instanceof Uint8Array) return body;
+  if (body instanceof ArrayBuffer) return new Uint8Array(body);
+  if (ArrayBuffer.isView(body)) {
+    return new Uint8Array(body.buffer, body.byteOffset, body.byteLength);
+  }
+  throw new WebhookSignatureError(
+    "Unsupported body type; pass a string, Buffer, Uint8Array or ArrayBuffer.",
+    "invalid_payload"
+  );
+}
+function bytesToUtf8(bytes) {
+  return new TextDecoder("utf-8").decode(bytes);
+}
+function concatBytes(a, b) {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
+}
+function bufferToHex(buffer) {
+  const bytes = new Uint8Array(buffer);
+  let hex = "";
+  for (let i = 0; i < bytes.length; i++) {
+    hex += bytes[i].toString(16).padStart(2, "0");
+  }
+  return hex;
+}
+function constantTimeEqual(a, b) {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  }
+  return diff === 0;
+}
+function getHeader(headers, name) {
+  if (!headers) return void 0;
+  const lower = name.toLowerCase();
+  if (typeof headers.get === "function") {
+    const v = headers.get(name) ?? headers.get(lower);
+    return v == null ? void 0 : String(v);
+  }
+  if (headers instanceof Map) {
+    for (const [k, v] of headers) {
+      if (k.toLowerCase() === lower) return Array.isArray(v) ? v[0] : String(v);
+    }
+    return void 0;
+  }
+  const obj = headers;
+  for (const k of Object.keys(obj)) {
+    if (k.toLowerCase() === lower) {
+      const v = obj[k];
+      return Array.isArray(v) ? v[0] : v;
+    }
+  }
+  return void 0;
+}
+function toNumber(value) {
+  if (value === void 0) return void 0;
+  const raw = Array.isArray(value) ? value[0] : value;
+  const n = typeof raw === "number" ? raw : Number.parseInt(String(raw), 10);
+  return Number.isFinite(n) ? n : void 0;
+}
+
 // src/index.ts
 var Metigan2 = class {
   /**
@@ -1819,10 +2068,13 @@ var Metigan2 = class {
       retryCount: options.retryCount,
       retryDelay: options.retryDelay
     });
+    this.webhooks = new MetiganWebhooks({
+      secret: options.webhookSecret
+    });
   }
 };
 var src_default = Metigan2;
 
-export { ALLOWED_MIME_TYPES, API_URL, ApiError, BLOCKED_MIME_TYPES, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, DebugLogger, MAX_FILE_SIZE, Metigan2 as Metigan, MetiganAudiences, MetiganContacts, metigan_default as MetiganEmail, Metigan as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, RateLimiter, SDK_VERSION, ValidationError, src_default as default, isAllowedMimeType, isSafeFileExtension, sanitizeEmail, sanitizeHtml, sanitizeSubject };
+export { ALLOWED_MIME_TYPES, API_URL, ApiError, BLOCKED_MIME_TYPES, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, DebugLogger, MAX_FILE_SIZE, Metigan2 as Metigan, MetiganAudiences, MetiganContacts, metigan_default as MetiganEmail, Metigan as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, MetiganWebhooks, RateLimiter, SDK_VERSION, ValidationError, WEBHOOK_EVENT_NAMES, WebhookSignatureError, src_default as default, isAllowedMimeType, isSafeFileExtension, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };
 //# sourceMappingURL=index.js.map
 //# sourceMappingURL=index.js.map

@@ -15,7 +15,7 @@ export const API_URL = (typeof process !== 'undefined' && process.env?.METIGAN_A
 /**
  * SDK Version
  */
-export const SDK_VERSION = '2.4.0';
+export const SDK_VERSION = '2.5.0';
 
 /**
  * Default timeout for API requests (in milliseconds)

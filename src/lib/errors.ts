@@ -44,3 +44,30 @@ export class MetiganError extends Error {
       this.data = data;
     }
   }
+
+  /**
+   * Error thrown when an incoming webhook cannot be verified.
+   *
+   * Every failure mode of {@link verifyWebhook} — a missing or malformed
+   * signature header, a timestamp outside the tolerance window, a signature
+   * that does not match, or a body that is not valid JSON — raises this
+   * error. Treat it as "reject the request" (respond 400) and never trust the
+   * payload.
+   */
+  export class WebhookSignatureError extends MetiganError {
+    /** Machine-readable reason, for logging/metrics. */
+    readonly reason:
+      | 'missing_secret'
+      | 'missing_signature'
+      | 'invalid_signature_format'
+      | 'timestamp_out_of_tolerance'
+      | 'no_signature_match'
+      | 'invalid_payload'
+      | 'crypto_unavailable';
+
+    constructor(message: string, reason: WebhookSignatureError['reason']) {
+      super(message);
+      this.name = 'WebhookSignatureError';
+      this.reason = reason;
+    }
+  }

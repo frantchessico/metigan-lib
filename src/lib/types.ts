@@ -551,6 +551,11 @@ export interface MetiganClientOptions {
   enableRateLimit?: boolean;
   /** Max requests per second for rate limiting (default: 10) */
   maxRequestsPerSecond?: number;
+  /**
+   * Default webhook signing secret (`whsec_…`) used by `client.webhooks.verify`.
+   * Optional; the secret can also be passed per `verify()` call.
+   */
+  webhookSecret?: string;
 }
 
 // ============================================
