@@ -51,7 +51,7 @@ const metigan = new Metigan({
   apiKey: 'mtg_live_...',        // required
   baseUrl: 'https://api.metigan.io', // optional; or set METIGAN_API_URL
   timeout: 30000,                // per-request timeout (ms), default 30000
-  retryCount: 3,                 // retries for 5xx/network errors, default 3
+  retryCount: 3,                 // retries after the first attempt (5xx, network, short 429), default 3
   retryDelay: 1000,              // base backoff (ms), grows exponentially
   // Email-specific:
   sanitizeHtml: true,            // strip risky HTML from content (default true)
@@ -116,27 +116,51 @@ await metigan.email.sendEmail({
 
 Attachments are validated against an allowlist of MIME types and extensions (max 7 MB each).
 
-### OTP and transactional (fast lane)
+### OTP, password resets, verification, welcome (fast lane)
 
-Single-recipient OTP and transactional messages take a dedicated low-latency path:
+Login codes and account emails never wait behind campaigns: they have their
+own queue and worker pool, retry in seconds, skip List-Unsubscribe and, by
+default, do not rewrite links (a scanner "clicking" a tracked reset link can
+burn a single-use token). Every call is safe to retry: the SDK sends an
+`Idempotency-Key` (one per call, reused by its own retries), and the API
+answers a repeated key with the first response instead of sending again.
 
 ```ts
-await metigan.email.sendOtp({
-  from: 'Acme <noreply@acme.com>',
+// One-time code: default email in pt, en or es — or your own template.
+const { emailId } = await metigan.email.sendOtp({
+  from: 'Acme <auth@acme.com>',
   to: 'user@example.com',
-  code: '482193',
+  code: '482193',          // a string keeps leading zeros
   appName: 'Acme',
   expiresInMinutes: 10,
+  locale: 'en',
+  // templateId: 'tpl_…'    // gets {{code}}, {{appName}}, {{expiresInMinutes}}
 });
 
+// Password reset / account verification / welcome.
 await metigan.email.sendTransactional({
-  from: 'Acme <noreply@acme.com>',
+  from: 'Acme <auth@acme.com>',
   to: 'user@example.com',
-  subject: 'Password changed',
-  content: '<p>Your password was updated.</p>',
-  idempotencyKey: 'pw-reset-8f21', // optional; de-duplicates retries
+  templateId: 'tpl_reset',             // or subject + html
+  variables: { name: 'Ana', resetUrl: 'https://acme.com/reset?t=…' },
+  idempotencyKey: `reset:${userId}:${requestId}`, // also covers retries of your own code
 });
+
+// Where is it?
+const status = await metigan.email.getEmailStatus(emailId); // queued → sent → delivered…
 ```
+
+- `{{name}}` is HTML-escaped; `{{{name}}}` inserts trusted HTML as is.
+- A plain-text part is derived from the HTML when you do not pass `text`.
+- `trackClicks: true` opts in to click tracking; `data-metigan-notrack` on an
+  `<a>` keeps one link untracked when tracking is on.
+- `headers: { 'X-Request-Id': '…' }` adds your own `X-` headers.
+- `sendEmail` takes `type: 'transactional'` for the same behaviour with
+  several recipients or attachments.
+- The sender must be on a domain you verified (or the shared Metigan
+  sender); otherwise the call fails with `403 domain_not_verified` at once.
+- Campaigns stop 2% short of your plan's limit, so codes and resets keep
+  going out when a campaign used the rest.
 
 ## Contacts
 
@@ -423,7 +447,7 @@ try {
 }
 ```
 
-`ApiError` (a subclass of `MetiganError`) carries the HTTP `status` and the parsed response `data`. 4xx responses fail immediately; 5xx and network errors are retried up to `retryCount` with exponential backoff before the error is thrown.
+`ApiError` (a subclass of `MetiganError`) carries the HTTP `status` and the parsed response `data` (with a stable `code` such as `domain_not_verified`, `recipient_rate_limited` or `idempotency_key_reused`). 4xx responses fail immediately, except a 429 with a `Retry-After` of up to 10 s; 5xx and network errors are retried up to `retryCount` times with exponential backoff before the error is thrown.
 
 Webhook verification failures raise `WebhookSignatureError` (also a subclass of `MetiganError`); see [Webhooks](#webhooks).
 

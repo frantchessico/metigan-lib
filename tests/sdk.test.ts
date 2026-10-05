@@ -76,7 +76,7 @@ describe('HttpClient behaviour', () => {
     const calls = mockFetch(() => ({ status: 503, body: { error: 'down' } }));
     const contacts = new MetiganContacts({ apiKey: KEY, baseUrl: BASE, retryCount: 3, retryDelay: 1 });
     await expect(contacts.get('c1')).rejects.toBeInstanceOf(ApiError);
-    expect(calls.length).toBe(3); // retried up to retryCount
+    expect(calls.length).toBe(4); // first attempt + retryCount retries
   });
 
   it('maps network failure to MetiganError', async () => {

@@ -32,13 +32,14 @@ var WebhookSignatureError = class extends MetiganError {
 
 // src/lib/config.ts
 var API_URL = typeof process !== "undefined" && process.env?.METIGAN_API_URL || "https://api.metigan.io";
-var SDK_VERSION = "2.5.0";
+var SDK_VERSION = "2.6.0";
 var DEFAULT_TIMEOUT = 3e4;
 var DEFAULT_RETRY_COUNT = 3;
 var DEFAULT_RETRY_DELAY = 1e3;
 var MAX_FILE_SIZE = 7 * 1024 * 1024;
 
 // src/core/client.ts
+var MAX_RETRY_AFTER_MS = 1e4;
 function ensureFetch() {
   if (typeof fetch === "undefined") {
     throw new MetiganError(
@@ -66,7 +67,7 @@ var HttpClient = class {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl || API_URL).replace(/\/+$/, "");
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
-    this.retryCount = Math.max(1, options.retryCount ?? DEFAULT_RETRY_COUNT);
+    this.retryCount = Math.max(0, options.retryCount ?? DEFAULT_RETRY_COUNT);
     this.retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY;
   }
   headers(hasJsonBody) {
@@ -88,12 +89,14 @@ var HttpClient = class {
     ensureFetch();
     const url = buildUrl(this.baseUrl, path, opts.query);
     const isForm = opts.form !== void 0;
-    const init = { method, headers: this.headers(!isForm && opts.body !== void 0) };
+    const init = { method, headers: { ...this.headers(!isForm && opts.body !== void 0), ...opts.headers } };
     if (isForm) init.body = opts.form;
     else if (opts.body !== void 0) init.body = JSON.stringify(opts.body);
     const timeout = opts.timeout ?? this.timeout;
     let lastError;
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
+    const attempts = this.retryCount + 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      let wait = this.retryDelay * Math.pow(2, attempt);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
       const onAbort = () => controller.abort();
@@ -105,6 +108,14 @@ var HttpClient = class {
         const res = await fetch(url, { ...init, signal: controller.signal });
         const payload = await parseBody(res);
         if (res.ok) return payload;
+        const retryAfter = retryAfterMs(res.headers.get("retry-after"));
+        const code = payload?.code;
+        if (res.status === 429 && retryAfter !== null && retryAfter <= MAX_RETRY_AFTER_MS || res.status === 409 && code === "idempotency_in_progress") {
+          lastError = apiError(res.status, payload);
+          wait = Math.max(retryAfter ?? 1e3, 250);
+          if (attempt < attempts - 1) await sleep(wait);
+          continue;
+        }
         if (res.status < 500) throw apiError(res.status, payload);
         lastError = apiError(res.status, payload);
       } catch (err) {
@@ -115,11 +126,23 @@ var HttpClient = class {
         clearTimeout(timer);
         opts.signal?.removeEventListener("abort", onAbort);
       }
-      if (attempt < this.retryCount - 1) await sleep(this.retryDelay * Math.pow(2, attempt));
+      if (attempt < attempts - 1) await sleep(wait);
     }
     throw lastError instanceof Error ? lastError : new MetiganError("Request failed after multiple attempts");
   }
 };
+function retryAfterMs(v) {
+  if (!v) return null;
+  const s = Number(v);
+  if (Number.isFinite(s)) return Math.max(0, s * 1e3);
+  const at = Date.parse(v);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
+function newIdempotencyKey() {
+  const c = globalThis.crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
+}
 async function parseBody(res) {
   const text = await res.text();
   if (!text) return void 0;
@@ -164,8 +187,6 @@ var DANGEROUS_TAGS = [
   "select",
   "textarea",
   "applet",
-  "meta",
-  "link",
   "base",
   "frame",
   "frameset",
@@ -412,13 +433,14 @@ function getDebugLogger(enabled = false) {
   return debugLogger;
 }
 var MetiganLogger = class {
-  constructor(http, apiKey, userId, debugEnabled = false) {
+  // The API key authenticates the request (x-api-key); it is never put in
+  // the log body (it used to be, in plaintext, on every batch).
+  constructor(http, userId, debugEnabled = false) {
     this.disabled = false;
     this.pendingLogs = [];
     this.isBatchProcessing = false;
     this.batchTimeout = null;
     this.http = http;
-    this.apiKey = apiKey;
     this.userId = userId;
     this.debug = getDebugLogger(debugEnabled);
   }
@@ -491,7 +513,6 @@ var MetiganLogger = class {
         const validatedStatus = this._validateStatus(log.status);
         return {
           userId: this.userId,
-          apiKey: this.apiKey,
           endpoint: log.endpoint,
           status: validatedStatus.code,
           statusLabel: validatedStatus.label,
@@ -529,15 +550,6 @@ var MetiganLogger = class {
     this.scheduleBatchProcessing();
   }
 };
-var MetiganError2 = class extends Error {
-  constructor(message) {
-    super(message);
-    this.name = "MetiganError";
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor);
-    }
-  }
-};
 var Metigan = class {
   /**
    * Create a new Metigan client
@@ -546,10 +558,10 @@ var Metigan = class {
    */
   constructor(apiKey, options = {}) {
     if (!apiKey) {
-      throw new MetiganError2("API key is required");
+      throw new MetiganError("API key is required");
     }
     if (apiKey.length < 10) {
-      throw new MetiganError2("Invalid API key format");
+      throw new MetiganError("Invalid API key format");
     }
     this.http = new HttpClient({
       apiKey,
@@ -569,7 +581,7 @@ var Metigan = class {
       this.rateLimiter = null;
     }
     const userId = options.userId || "anonymous";
-    this.logger = new MetiganLogger(this.http, apiKey, userId, options.debug || false);
+    this.logger = new MetiganLogger(this.http, userId, options.debug || false);
     if (options.disableLogs) {
       this.logger.disable();
     }
@@ -630,8 +642,8 @@ var Metigan = class {
     if (!messageData.recipients || !Array.isArray(messageData.recipients) || messageData.recipients.length === 0) {
       return { isValid: false, error: "Recipients must be a non-empty array" };
     }
-    if (!messageData.subject) {
-      return { isValid: false, error: "Subject is required" };
+    if (!messageData.subject && !messageData.templateId) {
+      return { isValid: false, error: "Subject is required (or a templateId whose subject is used)" };
     }
     if (!messageData.content && !messageData.templateId) {
       return { isValid: false, error: "Either content or templateId is required" };
@@ -687,7 +699,7 @@ var Metigan = class {
       let mimetype;
       if (typeof File !== "undefined" && file instanceof File) {
         if (file.size > MAX_FILE_SIZE) {
-          throw new MetiganError2(`File ${file.name} exceeds the maximum size of 7MB`);
+          throw new MetiganError(`File ${file.name} exceeds the maximum size of 7MB`);
         }
         buffer = await file.arrayBuffer();
         filename = file.name;
@@ -695,7 +707,7 @@ var Metigan = class {
       } else if ("buffer" in file && "originalname" in file) {
         const nodeFile = file;
         if (nodeFile.buffer.length > MAX_FILE_SIZE) {
-          throw new MetiganError2(`File ${nodeFile.originalname} exceeds the maximum size of 7MB`);
+          throw new MetiganError(`File ${nodeFile.originalname} exceeds the maximum size of 7MB`);
         }
         buffer = nodeFile.buffer;
         filename = nodeFile.originalname;
@@ -711,13 +723,13 @@ var Metigan = class {
           contentSize = Buffer.from(customFile.content).length;
         }
         if (contentSize > MAX_FILE_SIZE) {
-          throw new MetiganError2(`File ${customFile.filename} exceeds the maximum size of 7MB`);
+          throw new MetiganError(`File ${customFile.filename} exceeds the maximum size of 7MB`);
         }
         buffer = customFile.content;
         filename = customFile.filename;
         mimetype = customFile.contentType || this._getMimeType(customFile.filename);
       } else {
-        throw new MetiganError2("Invalid attachment format");
+        throw new MetiganError("Invalid attachment format");
       }
       let content = buffer;
       if (typeof window !== "undefined") {
@@ -762,10 +774,10 @@ var Metigan = class {
         filename = customFile.filename;
         mimetype = customFile.contentType;
       } else {
-        throw new MetiganError2("Invalid attachment format");
+        throw new MetiganError("Invalid attachment format");
       }
       if (!isSafeFileExtension(filename)) {
-        throw new MetiganError2(`File extension not allowed for security reasons: ${filename}`);
+        throw new MetiganError(`File extension not allowed for security reasons: ${filename}`);
       }
       if (mimetype && !isAllowedMimeType(mimetype)) {
         this.debug.warn(`MIME type not in allowlist: ${mimetype} for ${filename}`);
@@ -818,204 +830,149 @@ var Metigan = class {
   async sendEmail(options) {
     if (this.rateLimiter && !this.rateLimiter.tryRequest()) {
       const waitTime = this.rateLimiter.getTimeUntilNextRequest();
-      throw new MetiganError2(`Rate limit exceeded. Please wait ${waitTime}ms before making another request.`);
+      throw new MetiganError(`Rate limit exceeded. Please wait ${waitTime}ms before making another request.`);
     }
-    let statusCode = 500;
-    try {
-      const validation = this._validateMessageData(options);
-      if (!validation.isValid) {
-        throw new MetiganError2(validation.error || "Invalid email data");
-      }
-      const sanitizedOptions = {
-        ...options,
-        from: sanitizeEmail(options.from),
-        recipients: options.recipients.map((r) => sanitizeEmail(r)),
-        subject: sanitizeSubject(options.subject),
-        content: options.content ? this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content : void 0,
-        templateId: options.templateId,
-        cc: options.cc?.map((c) => sanitizeEmail(c)),
-        bcc: options.bcc?.map((b) => sanitizeEmail(b)),
-        replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : void 0
-      };
-      const useTemplate = !!options.templateId;
-      this.debug.log("Email sanitized and validated");
-      let formData;
-      const attachmentsAreFileLike = !!options.attachments && options.attachments.length > 0 && options.attachments.every(
+    const validation = this._validateMessageData(options);
+    if (!validation.isValid) {
+      throw new MetiganError(validation.error || "Invalid email data");
+    }
+    const fields = {
+      from: sanitizeEmail(options.from),
+      recipients: options.recipients.map((r) => sanitizeEmail(r)),
+      subject: options.subject ? sanitizeSubject(options.subject) : void 0,
+      cc: options.cc?.length ? options.cc.map((c) => sanitizeEmail(c)) : void 0,
+      bcc: options.bcc?.length ? options.bcc.map((b) => sanitizeEmail(b)) : void 0,
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : void 0,
+      text: options.text,
+      variables: options.variables,
+      type: options.type,
+      trackOpens: options.trackOpens,
+      trackClicks: options.trackClicks,
+      unsubscribe: options.unsubscribe,
+      headers: options.headers
+    };
+    if (options.templateId) {
+      fields.useTemplate = "true";
+      fields.templateId = options.templateId;
+    } else if (options.content) {
+      fields.content = this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content;
+    }
+    const idempotencyKey = options.idempotencyKey || newIdempotencyKey();
+    const headers = { "Idempotency-Key": idempotencyKey };
+    let request = { body: fields, headers };
+    if (options.attachments && options.attachments.length > 0) {
+      await this._validateAttachments(options.attachments);
+      const fileLike = options.attachments.every(
         (a) => typeof File !== "undefined" && a instanceof File || typeof Blob !== "undefined" && a instanceof Blob
       );
-      if (options.attachments && options.attachments.length > 0) {
-        await this._validateAttachments(options.attachments);
-        if (attachmentsAreFileLike) {
-          formData = new FormData();
-          formData.append("from", sanitizedOptions.from);
-          formData.append("recipients", JSON.stringify(sanitizedOptions.recipients));
-          formData.append("subject", sanitizedOptions.subject);
-          if (useTemplate && sanitizedOptions.templateId) {
-            formData.append("useTemplate", "true");
-            formData.append("templateId", sanitizedOptions.templateId);
-          } else if (sanitizedOptions.content) {
-            formData.append("content", sanitizedOptions.content);
-          }
-          if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-            formData.append("cc", JSON.stringify(sanitizedOptions.cc));
-          }
-          if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-            formData.append("bcc", JSON.stringify(sanitizedOptions.bcc));
-          }
-          if (sanitizedOptions.replyTo) {
-            formData.append("replyTo", sanitizedOptions.replyTo);
-          }
-          for (const file of options.attachments) {
-            formData.append("files", file, file.name);
-          }
-        } else {
-          const processedAttachments = await this._processAttachments(options.attachments);
-          formData = {
-            from: sanitizedOptions.from,
-            recipients: sanitizedOptions.recipients,
-            subject: sanitizedOptions.subject,
-            attachments: processedAttachments
-          };
-          if (useTemplate && sanitizedOptions.templateId) {
-            formData.useTemplate = "true";
-            formData.templateId = sanitizedOptions.templateId;
-          } else if (sanitizedOptions.content) {
-            formData.content = sanitizedOptions.content;
-          }
-          if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-            formData.cc = sanitizedOptions.cc;
-          }
-          if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-            formData.bcc = sanitizedOptions.bcc;
-          }
-          if (sanitizedOptions.replyTo) {
-            formData.replyTo = sanitizedOptions.replyTo;
-          }
+      if (fileLike) {
+        const form = new FormData();
+        for (const [k, v] of Object.entries(fields)) {
+          if (v === void 0) continue;
+          form.append(k, typeof v === "string" ? v : JSON.stringify(v));
         }
+        for (const file of options.attachments) {
+          form.append("files", file, file.name);
+        }
+        request = { form, headers };
       } else {
-        formData = {
-          from: sanitizedOptions.from,
-          recipients: sanitizedOptions.recipients,
-          subject: sanitizedOptions.subject
-        };
-        if (useTemplate && sanitizedOptions.templateId) {
-          formData.useTemplate = "true";
-          formData.templateId = sanitizedOptions.templateId;
-        } else if (sanitizedOptions.content) {
-          formData.content = sanitizedOptions.content;
-        }
-        if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-          formData.cc = sanitizedOptions.cc;
-        }
-        if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-          formData.bcc = sanitizedOptions.bcc;
-        }
-        if (sanitizedOptions.replyTo) {
-          formData.replyTo = sanitizedOptions.replyTo;
-        }
+        request = { body: { ...fields, attachments: await this._processAttachments(options.attachments) }, headers };
       }
-      try {
-        const isMultipart = typeof FormData !== "undefined" && formData instanceof FormData;
-        const response = await this.http.request(
-          "POST",
-          "/api/email/send",
-          isMultipart ? { form: formData } : { body: formData }
-        );
-        statusCode = 200;
-        await this.logger.log(
-          `/email/send`,
-          statusCode,
-          "POST"
-        );
-        return response;
-      } catch (httpError) {
-        if (httpError.status) {
-          statusCode = httpError.status;
-        }
-        await this.logger.log(
-          `/email/send`,
-          statusCode,
-          "POST"
-        );
-        if (httpError.status) {
-          if (httpError.data && httpError.data.error) {
-            throw new MetiganError2(httpError.data.message || httpError.data.error);
-          } else {
-            throw new MetiganError2(`Request failed with status ${httpError.status}`);
-          }
-        }
-        throw new MetiganError2("Failed to connect to the email service");
-      }
+    }
+    try {
+      const response = await this.http.request("POST", "/api/email/send", request);
+      await this.logger.log("/email/send", 200, "POST");
+      return response;
     } catch (error) {
-      await this.logger.log(
-        `/email/send/error`,
-        statusCode,
-        "POST"
-      );
-      if (error instanceof MetiganError2) {
-        throw error;
-      }
-      throw new MetiganError2("An unexpected error occurred while sending email");
+      await this.logger.log("/email/send", error instanceof ApiError && error.status ? error.status : 500, "POST");
+      if (error instanceof MetiganError) throw error;
+      throw new MetiganError("An unexpected error occurred while sending email");
     }
   }
   /**
-  * Generates a unique tracking ID for email analytics
-  * @returns A unique tracking ID string
-  * @private
-  */
-  /**
-   * Send OTP email (fast lane)
-   * @param options - OTP send options
+   * Send an OTP (one-time code) email: dedicated realtime queue and worker
+   * pool, no tracking, no List-Unsubscribe. Safe to retry: one email per
+   * idempotency key (generated per call when omitted).
    */
   async sendOtp(options) {
     const recipient = options.to || options.email;
     if (!recipient) {
-      throw new MetiganError2("Recipient email is required");
+      throw new MetiganError("Recipient email is required");
     }
     if (!options.from) {
-      throw new MetiganError2("Sender email (from) is required");
+      throw new MetiganError("Sender email (from) is required");
     }
-    if (!options.code) {
-      throw new MetiganError2("OTP code is required");
+    if (options.code === void 0 || options.code === null || options.code === "") {
+      throw new MetiganError("OTP code is required");
     }
     const payload = {
-      ...options.to ? { to: recipient } : { email: recipient },
+      to: sanitizeEmail(recipient),
       from: sanitizeEmail(options.from),
-      code: options.code,
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : void 0,
+      code: typeof options.code === "number" ? String(options.code) : options.code,
       appName: options.appName,
       expiresInMinutes: options.expiresInMinutes,
+      locale: options.locale,
       subject: options.subject ? sanitizeSubject(options.subject) : void 0,
-      idempotencyKey: options.idempotencyKey
+      templateId: options.templateId,
+      variables: options.variables,
+      text: options.text,
+      headers: options.headers
     };
-    return this.http.request("POST", "/api/otp/send", { body: payload });
+    return this.http.request("POST", "/api/otp/send", {
+      body: payload,
+      headers: { "Idempotency-Key": options.idempotencyKey || newIdempotencyKey() }
+    });
   }
   /**
-   * Send transactional email (fast lane)
-   * @param options - Transactional send options
+   * Send a transactional email (password reset, account verification,
+   * welcome, receipt): realtime queue, opens tracked, links not tracked by
+   * default. Safe to retry: one email per idempotency key.
    */
   async sendTransactional(options) {
     const recipient = options.to || options.email;
     if (!recipient) {
-      throw new MetiganError2("Recipient email is required");
+      throw new MetiganError("Recipient email is required");
     }
     if (!options.from) {
-      throw new MetiganError2("Sender email (from) is required");
-    }
-    if (!options.subject) {
-      throw new MetiganError2("Subject is required");
+      throw new MetiganError("Sender email (from) is required");
     }
     const content = options.content || options.html;
-    if (!content) {
-      throw new MetiganError2("Content or html is required");
+    if (!content && !options.templateId) {
+      throw new MetiganError("Content (html) or templateId is required");
+    }
+    if (!options.subject && !options.templateId) {
+      throw new MetiganError("Subject is required");
     }
     const payload = {
-      ...options.to ? { to: recipient } : { email: recipient },
+      to: sanitizeEmail(recipient),
       from: sanitizeEmail(options.from),
-      subject: sanitizeSubject(options.subject),
-      content: this.shouldSanitizeHtml ? sanitizeHtml(content) : content,
-      idempotencyKey: options.idempotencyKey
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : void 0,
+      subject: options.subject ? sanitizeSubject(options.subject) : void 0,
+      content: content ? this.shouldSanitizeHtml ? sanitizeHtml(content) : content : void 0,
+      text: options.text,
+      templateId: options.templateId,
+      variables: options.variables,
+      trackOpens: options.trackOpens,
+      trackClicks: options.trackClicks,
+      headers: options.headers
     };
-    return this.http.request("POST", "/api/transactional/send", { body: payload });
+    return this.http.request("POST", "/api/transactional/send", {
+      body: payload,
+      headers: { "Idempotency-Key": options.idempotencyKey || newIdempotencyKey() }
+    });
+  }
+  /**
+   * Where an email is now: queued/sending, sent, delivered, opened,
+   * clicked, bounced, failed… `emailId` comes from the send response.
+   * A 404 right after sending means the worker has not picked it up yet.
+   */
+  async getEmailStatus(emailId) {
+    if (!emailId) {
+      throw new MetiganError("emailId is required");
+    }
+    const res = await this.http.request("GET", `/api/email/${encodeURIComponent(emailId)}`);
+    return res.data;
   }
   /**
    * Enable debug mode

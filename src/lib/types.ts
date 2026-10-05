@@ -36,18 +36,52 @@ export interface ProcessedAttachment {
   disposition: string;
 }
 
+/** Delivery options shared by every send method. */
+export interface DeliveryOptions {
+  /**
+   * Makes the send safe to retry: the API answers a repeated key with the
+   * first response, without sending again. The SDK generates one per call
+   * (reused by its own retries) when you omit it; pass your own to also
+   * cover retries of your code (e.g. `reset:${userId}:${requestId}`).
+   */
+  idempotencyKey?: string;
+  /** Your own `X-` headers (at most 10, printable ASCII; not `X-Metigan-*`). */
+  headers?: Record<string, string>;
+}
+
 /**
  * Email options interface
  */
-export interface EmailOptions {
+export interface EmailOptions extends DeliveryOptions {
   /** Sender email address (or Name <email>) */
   from: string;
   /** List of recipient email addresses */
   recipients: string[];
-  /** Email subject */
-  subject: string;
-  /** Email content (HTML supported) */
-  content: string;
+  /** Email subject (optional with a templateId: the template's subject is used) */
+  subject?: string;
+  /** Email content (HTML supported) - Required if not using templateId */
+  content?: string;
+  /** Plain-text part (derived from the HTML for transactional sends when omitted) */
+  text?: string;
+  /** Template ID for using pre-created templates (optional) */
+  templateId?: string;
+  /**
+   * Values for `{{name}}` in the subject, content and template. In HTML,
+   * `{{name}}` is escaped; use `{{{name}}}` for trusted HTML.
+   */
+  variables?: Record<string, string | number | boolean>;
+  /**
+   * `transactional` (codes, resets, receipts: realtime queue, no
+   * List-Unsubscribe, links not tracked) or `marketing`. Omitted: one
+   * recipient is transactional, several are marketing.
+   */
+  type?: 'transactional' | 'marketing';
+  /** Track opens (default true). */
+  trackOpens?: boolean;
+  /** Track clicks (default true; false for `type: 'transactional'`). */
+  trackClicks?: boolean;
+  /** Add List-Unsubscribe (default true; false for `type: 'transactional'`). */
+  unsubscribe?: boolean;
   /** Optional file attachments */
   attachments?: Array<File | NodeAttachment | CustomAttachment>;
   /** Optional CC recipients */
@@ -56,70 +90,109 @@ export interface EmailOptions {
   bcc?: string[];
   /** Optional reply-to address */
   replyTo?: string;
-  /** Optional tracking ID for email analytics */
-  trackingId?: string;
 }
 
 /**
- * OTP send options
+ * OTP send options. OTPs go through a dedicated queue and worker pool
+ * (never behind campaigns), without tracking or List-Unsubscribe.
  */
-export interface OtpSendOptions {
+export interface OtpSendOptions extends DeliveryOptions {
   /** Recipient email */
   to?: string;
   /** Recipient email (alias) */
   email?: string;
   /** Sender email address */
   from: string;
-  /** OTP code */
-  code: string;
-  /** Optional app name */
+  /** Reply-to address */
+  replyTo?: string;
+  /** OTP code (a string keeps leading zeros) */
+  code: string | number;
+  /** App name shown in the default email */
   appName?: string;
-  /** Optional expiration in minutes */
+  /** Expiration shown in the default email (minutes, default 10) */
   expiresInMinutes?: number;
+  /** Language of the default email: `pt` (default), `en` or `es` */
+  locale?: string;
   /** Optional subject */
   subject?: string;
-  /** Optional idempotency key */
-  idempotencyKey?: string;
+  /** Your own template; it gets `{{code}}`, `{{appName}}`, `{{expiresInMinutes}}` and `variables` */
+  templateId?: string;
+  /** Extra template variables */
+  variables?: Record<string, string | number | boolean>;
+  /** Plain-text part (a localized one is sent by default) */
+  text?: string;
 }
 
 /**
- * Transactional send options
+ * Transactional send options (password resets, verifications, receipts):
+ * realtime queue, opens tracked, links not tracked by default.
  */
-export interface TransactionalSendOptions {
+export interface TransactionalSendOptions extends DeliveryOptions {
   /** Recipient email */
   to?: string;
   /** Recipient email (alias) */
   email?: string;
   /** Sender email address */
   from: string;
-  /** Subject */
-  subject: string;
+  /** Reply-to address */
+  replyTo?: string;
+  /** Subject (optional with a templateId) */
+  subject?: string;
   /** HTML content */
   content?: string;
   /** HTML content (alias) */
   html?: string;
-  /** Optional idempotency key */
-  idempotencyKey?: string;
+  /** Plain-text part (derived from the HTML when omitted) */
+  text?: string;
+  /** Template ID (instead of content) */
+  templateId?: string;
+  /** Values for `{{name}}` (escaped in HTML) and `{{{name}}}` (raw) */
+  variables?: Record<string, string | number | boolean>;
+  /** Track opens (default true) */
+  trackOpens?: boolean;
+  /**
+   * Track clicks (default false: a reset or verification link rewritten
+   * through a tracker can be opened by a mail scanner and burn the token).
+   * Mark single links with `data-metigan-notrack` to keep them untracked.
+   */
+  trackClicks?: boolean;
 }
 
-/**
- * OTP send response
- */
-export interface OtpSendResponse {
+/** Response of sendOtp and sendTransactional. */
+export interface QuickSendResponse {
   success: boolean;
-  message?: string;
-  data?: any;
-  error?: string;
+  queued: boolean;
+  status: 'queued';
+  /** Id of the email: pass it to getEmailStatus. */
+  emailId: string;
+  trackingId: string;
 }
 
-/**
- * Transactional send response
- */
-export interface TransactionalSendResponse {
-  success: boolean;
-  message?: string;
-  data?: any;
-  error?: string;
+/** OTP send response */
+export type OtpSendResponse = QuickSendResponse;
+
+/** Transactional send response */
+export type TransactionalSendResponse = QuickSendResponse;
+
+/** Where an email is now (getEmailStatus). */
+export interface EmailStatus {
+  emailId: string;
+  trackingId: string;
+  messageId?: string;
+  status: 'sending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'complained' | 'failed' | 'skipped' | string;
+  kind?: 'otp' | 'transactional' | 'campaign' | string;
+  recipient: string;
+  subject: string;
+  queuedAt?: string;
+  sentAt?: string;
+  deliveredAt?: string;
+  firstOpenedAt?: string;
+  openCount: number;
+  clickCount: number;
+  bounceReason?: string;
+  failureReason?: string;
+  /** Last temporary error while it is still being retried. */
+  lastError?: string;
 }
 
 /**
@@ -136,9 +209,14 @@ export interface ValidationResult {
 export interface EmailSuccessResponse {
   success: true;
   message: string;
+  /** `transactional` or `marketing`. */
+  type?: 'transactional' | 'marketing';
   successfulEmails: {
     recipient: string;
+    /** Pass it to getEmailStatus. */
+    emailId: string;
     trackingId: string;
+    jobId?: string;
   }[];
   failedEmails: {
     recipient: string;

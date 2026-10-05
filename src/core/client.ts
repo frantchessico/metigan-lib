@@ -31,7 +31,11 @@ export interface HttpClientOptions {
   baseUrl?: string;
   /** Per-request timeout in milliseconds (default 30000). */
   timeout?: number;
-  /** Retry attempts for transient failures — network errors and 5xx (default 3). */
+  /**
+   * Retries after the first attempt for transient failures — network
+   * errors, timeouts, 5xx, a short 429 (`Retry-After` ≤ 10 s) and an
+   * idempotent request still in progress (default 3, so up to 4 attempts).
+   */
   retryCount?: number;
   /** Base delay between retries in milliseconds; grows exponentially (default 1000). */
   retryDelay?: number;
@@ -49,7 +53,12 @@ export interface RequestOptions {
   timeout?: number;
   /** Caller abort signal, combined with the timeout. */
   signal?: AbortSignal;
+  /** Extra request headers (e.g. `Idempotency-Key`). */
+  headers?: Record<string, string>;
 }
+
+/** Longest `Retry-After` the client waits for by itself. */
+const MAX_RETRY_AFTER_MS = 10_000;
 
 function ensureFetch(): void {
   if (typeof fetch === 'undefined') {
@@ -91,7 +100,7 @@ export class HttpClient {
     this.apiKey = options.apiKey;
     this.baseUrl = (options.baseUrl || API_URL).replace(/\/+$/, '');
     this.timeout = options.timeout ?? DEFAULT_TIMEOUT;
-    this.retryCount = Math.max(1, options.retryCount ?? DEFAULT_RETRY_COUNT);
+    this.retryCount = Math.max(0, options.retryCount ?? DEFAULT_RETRY_COUNT);
     this.retryDelay = options.retryDelay ?? DEFAULT_RETRY_DELAY;
   }
 
@@ -115,14 +124,16 @@ export class HttpClient {
     ensureFetch();
     const url = buildUrl(this.baseUrl, path, opts.query);
     const isForm = opts.form !== undefined;
-    const init: RequestInit = { method, headers: this.headers(!isForm && opts.body !== undefined) };
+    const init: RequestInit = { method, headers: { ...this.headers(!isForm && opts.body !== undefined), ...opts.headers } };
     if (isForm) init.body = opts.form as BodyInit;
     else if (opts.body !== undefined) init.body = JSON.stringify(opts.body);
 
     const timeout = opts.timeout ?? this.timeout;
     let lastError: unknown;
 
-    for (let attempt = 0; attempt < this.retryCount; attempt++) {
+    const attempts = this.retryCount + 1;
+    for (let attempt = 0; attempt < attempts; attempt++) {
+      let wait = this.retryDelay * Math.pow(2, attempt);
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeout);
       const onAbort = () => controller.abort();
@@ -134,6 +145,18 @@ export class HttpClient {
         const res = await fetch(url, { ...init, signal: controller.signal });
         const payload = await parseBody(res);
         if (res.ok) return payload as T;
+
+        const retryAfter = retryAfterMs(res.headers.get('retry-after'));
+        const code = (payload as { code?: unknown } | undefined)?.code;
+        // A short rate-limit window, or the same idempotent request still
+        // running on the server: wait and try again.
+        if ((res.status === 429 && retryAfter !== null && retryAfter <= MAX_RETRY_AFTER_MS) ||
+            (res.status === 409 && code === 'idempotency_in_progress')) {
+          lastError = apiError(res.status, payload);
+          wait = Math.max(retryAfter ?? 1000, 250);
+          if (attempt < attempts - 1) await sleep(wait);
+          continue;
+        }
 
         // 4xx: a client error — do not retry, surface immediately.
         if (res.status < 500) throw apiError(res.status, payload);
@@ -149,12 +172,27 @@ export class HttpClient {
         clearTimeout(timer);
         opts.signal?.removeEventListener('abort', onAbort);
       }
-      if (attempt < this.retryCount - 1) await sleep(this.retryDelay * Math.pow(2, attempt));
+      if (attempt < attempts - 1) await sleep(wait);
     }
     throw lastError instanceof Error
       ? lastError
       : new MetiganError('Request failed after multiple attempts');
   }
+}
+
+function retryAfterMs(v: string | null): number | null {
+  if (!v) return null;
+  const s = Number(v);
+  if (Number.isFinite(s)) return Math.max(0, s * 1000);
+  const at = Date.parse(v);
+  return Number.isNaN(at) ? null : Math.max(0, at - Date.now());
+}
+
+/** A random idempotency key (one per logical send, reused by its retries). */
+export function newIdempotencyKey(): string {
+  const c = (globalThis as { crypto?: { randomUUID?: () => string } }).crypto;
+  if (c?.randomUUID) return c.randomUUID();
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}-${Math.random().toString(36).slice(2)}`;
 }
 
 async function parseBody(res: Response): Promise<unknown> {

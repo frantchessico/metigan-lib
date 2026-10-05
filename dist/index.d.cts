@@ -5,7 +5,7 @@
 /**
  * Interface for email attachment in Node.js environment
  */
-interface NodeAttachment$1 {
+interface NodeAttachment {
     buffer: Buffer;
     originalname: string;
     mimetype: string;
@@ -13,7 +13,7 @@ interface NodeAttachment$1 {
 /**
  * Interface for email attachment in any environment
  */
-interface CustomAttachment$1 {
+interface CustomAttachment {
     content: Buffer | ArrayBuffer | Uint8Array | string;
     filename: string;
     contentType: string;
@@ -28,86 +28,156 @@ interface ProcessedAttachment {
     encoding: string;
     disposition: string;
 }
+/** Delivery options shared by every send method. */
+interface DeliveryOptions {
+    /**
+     * Makes the send safe to retry: the API answers a repeated key with the
+     * first response, without sending again. The SDK generates one per call
+     * (reused by its own retries) when you omit it; pass your own to also
+     * cover retries of your code (e.g. `reset:${userId}:${requestId}`).
+     */
+    idempotencyKey?: string;
+    /** Your own `X-` headers (at most 10, printable ASCII; not `X-Metigan-*`). */
+    headers?: Record<string, string>;
+}
 /**
  * Email options interface
  */
-interface EmailOptions$1 {
+interface EmailOptions extends DeliveryOptions {
     /** Sender email address (or Name <email>) */
     from: string;
     /** List of recipient email addresses */
     recipients: string[];
-    /** Email subject */
-    subject: string;
-    /** Email content (HTML supported) */
-    content: string;
+    /** Email subject (optional with a templateId: the template's subject is used) */
+    subject?: string;
+    /** Email content (HTML supported) - Required if not using templateId */
+    content?: string;
+    /** Plain-text part (derived from the HTML for transactional sends when omitted) */
+    text?: string;
+    /** Template ID for using pre-created templates (optional) */
+    templateId?: string;
+    /**
+     * Values for `{{name}}` in the subject, content and template. In HTML,
+     * `{{name}}` is escaped; use `{{{name}}}` for trusted HTML.
+     */
+    variables?: Record<string, string | number | boolean>;
+    /**
+     * `transactional` (codes, resets, receipts: realtime queue, no
+     * List-Unsubscribe, links not tracked) or `marketing`. Omitted: one
+     * recipient is transactional, several are marketing.
+     */
+    type?: 'transactional' | 'marketing';
+    /** Track opens (default true). */
+    trackOpens?: boolean;
+    /** Track clicks (default true; false for `type: 'transactional'`). */
+    trackClicks?: boolean;
+    /** Add List-Unsubscribe (default true; false for `type: 'transactional'`). */
+    unsubscribe?: boolean;
     /** Optional file attachments */
-    attachments?: Array<File | NodeAttachment$1 | CustomAttachment$1>;
+    attachments?: Array<File | NodeAttachment | CustomAttachment>;
     /** Optional CC recipients */
     cc?: string[];
     /** Optional BCC recipients */
     bcc?: string[];
     /** Optional reply-to address */
     replyTo?: string;
-    /** Optional tracking ID for email analytics */
-    trackingId?: string;
 }
 /**
- * OTP send options
+ * OTP send options. OTPs go through a dedicated queue and worker pool
+ * (never behind campaigns), without tracking or List-Unsubscribe.
  */
-interface OtpSendOptions {
+interface OtpSendOptions extends DeliveryOptions {
     /** Recipient email */
     to?: string;
     /** Recipient email (alias) */
     email?: string;
     /** Sender email address */
     from: string;
-    /** OTP code */
-    code: string;
-    /** Optional app name */
+    /** Reply-to address */
+    replyTo?: string;
+    /** OTP code (a string keeps leading zeros) */
+    code: string | number;
+    /** App name shown in the default email */
     appName?: string;
-    /** Optional expiration in minutes */
+    /** Expiration shown in the default email (minutes, default 10) */
     expiresInMinutes?: number;
+    /** Language of the default email: `pt` (default), `en` or `es` */
+    locale?: string;
     /** Optional subject */
     subject?: string;
-    /** Optional idempotency key */
-    idempotencyKey?: string;
+    /** Your own template; it gets `{{code}}`, `{{appName}}`, `{{expiresInMinutes}}` and `variables` */
+    templateId?: string;
+    /** Extra template variables */
+    variables?: Record<string, string | number | boolean>;
+    /** Plain-text part (a localized one is sent by default) */
+    text?: string;
 }
 /**
- * Transactional send options
+ * Transactional send options (password resets, verifications, receipts):
+ * realtime queue, opens tracked, links not tracked by default.
  */
-interface TransactionalSendOptions {
+interface TransactionalSendOptions extends DeliveryOptions {
     /** Recipient email */
     to?: string;
     /** Recipient email (alias) */
     email?: string;
     /** Sender email address */
     from: string;
-    /** Subject */
-    subject: string;
+    /** Reply-to address */
+    replyTo?: string;
+    /** Subject (optional with a templateId) */
+    subject?: string;
     /** HTML content */
     content?: string;
     /** HTML content (alias) */
     html?: string;
-    /** Optional idempotency key */
-    idempotencyKey?: string;
+    /** Plain-text part (derived from the HTML when omitted) */
+    text?: string;
+    /** Template ID (instead of content) */
+    templateId?: string;
+    /** Values for `{{name}}` (escaped in HTML) and `{{{name}}}` (raw) */
+    variables?: Record<string, string | number | boolean>;
+    /** Track opens (default true) */
+    trackOpens?: boolean;
+    /**
+     * Track clicks (default false: a reset or verification link rewritten
+     * through a tracker can be opened by a mail scanner and burn the token).
+     * Mark single links with `data-metigan-notrack` to keep them untracked.
+     */
+    trackClicks?: boolean;
 }
-/**
- * OTP send response
- */
-interface OtpSendResponse {
+/** Response of sendOtp and sendTransactional. */
+interface QuickSendResponse {
     success: boolean;
-    message?: string;
-    data?: any;
-    error?: string;
+    queued: boolean;
+    status: 'queued';
+    /** Id of the email: pass it to getEmailStatus. */
+    emailId: string;
+    trackingId: string;
 }
-/**
- * Transactional send response
- */
-interface TransactionalSendResponse {
-    success: boolean;
-    message?: string;
-    data?: any;
-    error?: string;
+/** OTP send response */
+type OtpSendResponse = QuickSendResponse;
+/** Transactional send response */
+type TransactionalSendResponse = QuickSendResponse;
+/** Where an email is now (getEmailStatus). */
+interface EmailStatus {
+    emailId: string;
+    trackingId: string;
+    messageId?: string;
+    status: 'sending' | 'sent' | 'delivered' | 'opened' | 'clicked' | 'bounced' | 'complained' | 'failed' | 'skipped' | string;
+    kind?: 'otp' | 'transactional' | 'campaign' | string;
+    recipient: string;
+    subject: string;
+    queuedAt?: string;
+    sentAt?: string;
+    deliveredAt?: string;
+    firstOpenedAt?: string;
+    openCount: number;
+    clickCount: number;
+    bounceReason?: string;
+    failureReason?: string;
+    /** Last temporary error while it is still being retried. */
+    lastError?: string;
 }
 /**
  * Validation result interface
@@ -119,12 +189,17 @@ interface ValidationResult {
 /**
  * API response interface for successful email
  */
-interface EmailSuccessResponse$1 {
+interface EmailSuccessResponse {
     success: true;
     message: string;
+    /** `transactional` or `marketing`. */
+    type?: 'transactional' | 'marketing';
     successfulEmails: {
         recipient: string;
+        /** Pass it to getEmailStatus. */
+        emailId: string;
         trackingId: string;
+        jobId?: string;
     }[];
     failedEmails: {
         recipient: string;
@@ -136,20 +211,20 @@ interface EmailSuccessResponse$1 {
 /**
  * API error response interfaces
  */
-interface EmailErrorResponse$1 {
+interface EmailErrorResponse {
     error: string;
     message: string;
 }
 /**
  * API key error response
  */
-interface ApiKeyErrorResponse$1 {
+interface ApiKeyErrorResponse {
     error: string;
 }
 /**
  * Union type for all possible API responses
  */
-type EmailApiResponse$1 = EmailSuccessResponse$1 | EmailErrorResponse$1 | ApiKeyErrorResponse$1;
+type EmailApiResponse = EmailSuccessResponse | EmailErrorResponse | ApiKeyErrorResponse;
 /**
  * Template variables type
  */
@@ -561,6 +636,47 @@ interface TemplateModuleOptions {
 }
 
 /**
+ * Custom error classes for Metigan
+ */
+/**
+ * Base error class for Metigan-specific errors
+ * Hides implementation details from stack traces
+ */
+declare class MetiganError extends Error {
+    constructor(message: string);
+}
+/**
+ * Error thrown when validation fails
+ */
+declare class ValidationError extends MetiganError {
+    constructor(message: string);
+}
+/**
+ * Error thrown when API request fails
+ */
+declare class ApiError extends MetiganError {
+    /** HTTP status code of the failed response. */
+    status?: number;
+    /** Parsed response body of the failed response, when available. */
+    data?: unknown;
+    constructor(message: string, status?: number, data?: unknown);
+}
+/**
+ * Error thrown when an incoming webhook cannot be verified.
+ *
+ * Every failure mode of {@link verifyWebhook} — a missing or malformed
+ * signature header, a timestamp outside the tolerance window, a signature
+ * that does not match, or a body that is not valid JSON — raises this
+ * error. Treat it as "reject the request" (respond 400) and never trust the
+ * payload.
+ */
+declare class WebhookSignatureError extends MetiganError {
+    /** Machine-readable reason, for logging/metrics. */
+    readonly reason: 'missing_secret' | 'missing_signature' | 'invalid_signature_format' | 'timestamp_out_of_tolerance' | 'no_signature_match' | 'invalid_payload' | 'crypto_unavailable';
+    constructor(message: string, reason: WebhookSignatureError['reason']);
+}
+
+/**
  * Metigan Security Module
  * Security utilities for the Metigan SDK
  * @version 2.4.0
@@ -664,79 +780,6 @@ declare class DebugLogger {
  */
 
 /**
- * Interface for email attachment in Node.js environment
- */
-interface NodeAttachment {
-    buffer: Buffer;
-    originalname: string;
-    mimetype: string;
-}
-/**
- * Interface for email attachment in any environment
- */
-interface CustomAttachment {
-    content: Buffer | ArrayBuffer | Uint8Array | string;
-    filename: string;
-    contentType: string;
-}
-/**
- * Email options interface
- */
-interface EmailOptions {
-    /** Sender email address (or Name <email>) */
-    from: string;
-    /** List of recipient email addresses */
-    recipients: string[];
-    /** Email subject */
-    subject: string;
-    /** Email content (HTML supported) - Required if not using templateId */
-    content?: string;
-    /** Template ID for using pre-created templates (optional) */
-    templateId?: string;
-    /** Optional file attachments */
-    attachments?: Array<File | NodeAttachment | CustomAttachment>;
-    /** Optional CC recipients */
-    cc?: string[];
-    /** Optional BCC recipients */
-    bcc?: string[];
-    /** Optional reply-to address */
-    replyTo?: string;
-}
-/**
- * API response interface for successful email
- */
-interface EmailSuccessResponse {
-    success: true;
-    message: string;
-    successfulEmails: {
-        recipient: string;
-        trackingId: string;
-    }[];
-    failedEmails: {
-        recipient: string;
-        error: string;
-    }[];
-    recipientCount: number;
-    emailsRemaining: number;
-}
-/**
- * API error response interfaces
- */
-interface EmailErrorResponse {
-    error: string;
-    message: string;
-}
-/**
- * API key error response
- */
-interface ApiKeyErrorResponse {
-    error: string;
-}
-/**
- * Union type for all possible API responses
- */
-type EmailApiResponse = EmailSuccessResponse | EmailErrorResponse | ApiKeyErrorResponse;
-/**
  * Metigan client options
  */
 interface MetiganOptions {
@@ -831,21 +874,25 @@ declare class Metigan$1 {
      * @param options - Email options
      * @returns Response from the API
      */
-    sendEmail(options: EmailOptions): Promise<EmailApiResponse>; /**
-     * Generates a unique tracking ID for email analytics
-     * @returns A unique tracking ID string
-     * @private
-     */
+    sendEmail(options: EmailOptions): Promise<EmailApiResponse>;
     /**
-     * Send OTP email (fast lane)
-     * @param options - OTP send options
+     * Send an OTP (one-time code) email: dedicated realtime queue and worker
+     * pool, no tracking, no List-Unsubscribe. Safe to retry: one email per
+     * idempotency key (generated per call when omitted).
      */
     sendOtp(options: OtpSendOptions): Promise<OtpSendResponse>;
     /**
-     * Send transactional email (fast lane)
-     * @param options - Transactional send options
+     * Send a transactional email (password reset, account verification,
+     * welcome, receipt): realtime queue, opens tracked, links not tracked by
+     * default. Safe to retry: one email per idempotency key.
      */
     sendTransactional(options: TransactionalSendOptions): Promise<TransactionalSendResponse>;
+    /**
+     * Where an email is now: queued/sending, sent, delivered, opened,
+     * clicked, bounced, failed… `emailId` comes from the send response.
+     * A 404 right after sending means the worker has not picked it up yet.
+     */
+    getEmailStatus(emailId: string): Promise<EmailStatus>;
     /**
      * Enable debug mode
      */
@@ -1263,47 +1310,6 @@ declare class MetiganTemplates {
 }
 
 /**
- * Custom error classes for Metigan
- */
-/**
- * Base error class for Metigan-specific errors
- * Hides implementation details from stack traces
- */
-declare class MetiganError extends Error {
-    constructor(message: string);
-}
-/**
- * Error thrown when validation fails
- */
-declare class ValidationError extends MetiganError {
-    constructor(message: string);
-}
-/**
- * Error thrown when API request fails
- */
-declare class ApiError extends MetiganError {
-    /** HTTP status code of the failed response. */
-    status?: number;
-    /** Parsed response body of the failed response, when available. */
-    data?: unknown;
-    constructor(message: string, status?: number, data?: unknown);
-}
-/**
- * Error thrown when an incoming webhook cannot be verified.
- *
- * Every failure mode of {@link verifyWebhook} — a missing or malformed
- * signature header, a timestamp outside the tolerance window, a signature
- * that does not match, or a body that is not valid JSON — raises this
- * error. Treat it as "reject the request" (respond 400) and never trust the
- * payload.
- */
-declare class WebhookSignatureError extends MetiganError {
-    /** Machine-readable reason, for logging/metrics. */
-    readonly reason: 'missing_secret' | 'missing_signature' | 'invalid_signature_format' | 'timestamp_out_of_tolerance' | 'no_signature_match' | 'invalid_payload' | 'crypto_unavailable';
-    constructor(message: string, reason: WebhookSignatureError['reason']);
-}
-
-/**
  * Metigan Suppressions Module
  * Read and manage the account's suppression list: the addresses Metigan
  * does not send to (bounces, spam complaints, unsubscribes and the ones you
@@ -1708,7 +1714,7 @@ declare const API_URL: string;
 /**
  * SDK Version
  */
-declare const SDK_VERSION = "2.5.0";
+declare const SDK_VERSION = "2.6.0";
 /**
  * Default timeout for API requests (in milliseconds)
  */
@@ -1757,4 +1763,4 @@ declare class Metigan {
 
 // @ts-ignore
 export = Metigan;
-export { ALLOWED_MIME_TYPES, API_URL, type AddSuppressionsOptions, type AddSuppressionsResult, type AnyWebhookEvent, ApiError, type ApiKeyErrorResponse$1 as ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactCreatedData, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment$1 as CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, type DashboardObjectData, DebugLogger, type EmailApiResponse$1 as EmailApiResponse, type EmailDeliveryData, type EmailErrorResponse$1 as EmailErrorResponse, type EmailEventMetadata, type EmailFailedData, type EmailOptions$1 as EmailOptions, type EmailSentData, type EmailSuccessResponse$1 as EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type EmailUnsubscribedData, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, type HeadersLike, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganSuppressions, MetiganTemplates, MetiganWebhooks, type MetiganWebhooksOptions, type NodeAttachment$1 as NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, RateLimiter, type RateLimiterConfig, type RawBody, type RemoveSuppressionOptions, type RemoveSuppressionsResult, SDK_VERSION, type Suppression, type SuppressionDetail, type SuppressionHistoryEntry, type SuppressionListOptions, type SuppressionListResponse, type SuppressionPolicy, type SuppressionReason, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, type VerifyWebhookOptions, WEBHOOK_EVENT_NAMES, type WebhookEvent, type WebhookEventDataMap, type WebhookEventName, WebhookSignatureError, isAllowedMimeType, isSafeFileExtension, isSuppressionPolicyError, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };
+export { ALLOWED_MIME_TYPES, API_URL, type AddSuppressionsOptions, type AddSuppressionsResult, type AnyWebhookEvent, ApiError, type ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactCreatedData, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, type DashboardObjectData, DebugLogger, type DeliveryOptions, type EmailApiResponse, type EmailDeliveryData, type EmailErrorResponse, type EmailEventMetadata, type EmailFailedData, type EmailOptions, type EmailSentData, type EmailStatus, type EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type EmailUnsubscribedData, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, type HeadersLike, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganSuppressions, MetiganTemplates, MetiganWebhooks, type MetiganWebhooksOptions, type NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, type QuickSendResponse, RateLimiter, type RateLimiterConfig, type RawBody, type RemoveSuppressionOptions, type RemoveSuppressionsResult, SDK_VERSION, type Suppression, type SuppressionDetail, type SuppressionHistoryEntry, type SuppressionListOptions, type SuppressionListResponse, type SuppressionPolicy, type SuppressionReason, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, type VerifyWebhookOptions, WEBHOOK_EVENT_NAMES, type WebhookEvent, type WebhookEventDataMap, type WebhookEventName, WebhookSignatureError, isAllowedMimeType, isSafeFileExtension, isSuppressionPolicyError, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };

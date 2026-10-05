@@ -1,6 +1,6 @@
 {
   "name": "metigan",
-  "version": "2.5.0",
+  "version": "2.6.0",
   "description": "Official Metigan SDK — send emails (bulk, OTP, transactional), manage forms, contacts and audiences. Zero runtime dependencies, TypeScript-first, works in Node.js and the browser.",
   "type": "module",
   "main": "./dist/index.cjs",

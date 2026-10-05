@@ -8,10 +8,12 @@
  * Dangerous HTML tags that could be used for XSS attacks
  */
 const DANGEROUS_TAGS = [
-  'script', 'iframe', 'object', 'embed', 'form', 'input', 
-  'button', 'select', 'textarea', 'applet', 'meta', 'link',
+  'script', 'iframe', 'object', 'embed', 'form', 'input',
+  'button', 'select', 'textarea', 'applet',
   'base', 'frame', 'frameset', 'layer', 'ilayer', 'bgsound'
 ];
+// <meta> (charset, viewport) and <link> (web fonts) are kept: email clients
+// ignore what they do not support, and removing them broke templates.
 
 /**
  * Dangerous attributes that could be used for XSS attacks

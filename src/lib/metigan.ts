@@ -4,7 +4,8 @@
  * @version 2.4.0
  */
 
-import { HttpClient } from '../core/client';
+import { HttpClient, newIdempotencyKey } from '../core/client';
+import { ApiError, MetiganError } from './errors';
 import { MAX_FILE_SIZE } from './config';
 import {
   sanitizeHtml, 
@@ -15,7 +16,15 @@ import {
   RateLimiter,
   DebugLogger
 } from './security';
-import type { OtpSendOptions, TransactionalSendOptions, OtpSendResponse, TransactionalSendResponse } from './types';
+import type {
+  OtpSendOptions,
+  TransactionalSendOptions,
+  OtpSendResponse,
+  TransactionalSendResponse,
+  EmailOptions,
+  EmailApiResponse,
+  EmailStatus,
+} from './types';
 
 // Status options constants
 const STATUS_OPTIONS = [
@@ -49,7 +58,6 @@ function getDebugLogger(enabled: boolean = false): DebugLogger {
  */
 class MetiganLogger {
   private http: HttpClient;
-  private apiKey: string;
   private userId: string;
   private disabled: boolean = false;
   private pendingLogs: Array<{endpoint: string, status: number, method: string}> = [];
@@ -57,9 +65,10 @@ class MetiganLogger {
   private batchTimeout: ReturnType<typeof setTimeout> | null = null;
   private debug: DebugLogger;
 
-  constructor(http: HttpClient, apiKey: string, userId: string, debugEnabled: boolean = false) {
+  // The API key authenticates the request (x-api-key); it is never put in
+  // the log body (it used to be, in plaintext, on every batch).
+  constructor(http: HttpClient, userId: string, debugEnabled: boolean = false) {
     this.http = http;
-    this.apiKey = apiKey;
     this.userId = userId;
     this.debug = getDebugLogger(debugEnabled);
   }
@@ -149,7 +158,6 @@ class MetiganLogger {
         const validatedStatus = this._validateStatus(log.status);
         return {
           userId: this.userId,
-          apiKey: this.apiKey,
           endpoint: log.endpoint,
           status: validatedStatus.code,
           statusLabel: validatedStatus.label,
@@ -200,20 +208,9 @@ class MetiganLogger {
   }
 }
 
-/**
- * Custom error class for Metigan-specific errors
- */
-export class MetiganError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = 'MetiganError';
-    
-    // This prevents the implementation details from showing in the stack trace
-    if (Error.captureStackTrace) {
-      Error.captureStackTrace(this, this.constructor);
-    }
-  }
-}
+// One error hierarchy for the whole SDK: `instanceof MetiganError` (and
+// ApiError for HTTP failures) works for errors of every module.
+export { MetiganError } from './errors';
 
 /**
  * Interface for email attachment in Node.js environment
@@ -245,30 +242,6 @@ interface ProcessedAttachment {
 }
 
 /**
- * Email options interface
- */
-export interface EmailOptions {
-  /** Sender email address (or Name <email>) */
-  from: string;
-  /** List of recipient email addresses */
-  recipients: string[];
-  /** Email subject */
-  subject: string;
-  /** Email content (HTML supported) - Required if not using templateId */
-  content?: string;
-  /** Template ID for using pre-created templates (optional) */
-  templateId?: string;
-  /** Optional file attachments */
-  attachments?: Array<File | NodeAttachment | CustomAttachment>;
-  /** Optional CC recipients */
-  cc?: string[];
-  /** Optional BCC recipients */
-  bcc?: string[];
-  /** Optional reply-to address */
-  replyTo?: string;
-}
-
-/**
  * Validation result interface
  */
 interface ValidationResult {
@@ -276,43 +249,8 @@ interface ValidationResult {
   error?: string;
 }
 
-/**
- * API response interface for successful email
- */
-export interface EmailSuccessResponse {
-  success: true;
-  message: string;
-  successfulEmails: {
-    recipient: string;
-    trackingId: string;
-  }[];
-  failedEmails: {
-    recipient: string;
-    error: string;
-  }[];
-  recipientCount: number;
-  emailsRemaining: number;
-}
+export type { EmailOptions, EmailSuccessResponse, EmailErrorResponse, ApiKeyErrorResponse, EmailApiResponse } from './types';
 
-/**
- * API error response interfaces
- */
-export interface EmailErrorResponse {
-  error: string;
-  message: string;
-}
-
-/**
- * API key error response
- */
-export interface ApiKeyErrorResponse {
-  error: string;
-}
-
-/**
- * Union type for all possible API responses
- */
-export type EmailApiResponse = EmailSuccessResponse | EmailErrorResponse | ApiKeyErrorResponse;
 
 /**
  * Template variables type
@@ -400,7 +338,7 @@ export class Metigan {
     
     // Initialize logger
     const userId = options.userId || 'anonymous';
-    this.logger = new MetiganLogger(this.http, apiKey, userId, options.debug || false);
+    this.logger = new MetiganLogger(this.http, userId, options.debug || false);
     
     // Disable logs if requested
     if (options.disableLogs) {
@@ -482,8 +420,8 @@ export class Metigan {
       return { isValid: false, error: 'Recipients must be a non-empty array' };
     }
     
-    if (!messageData.subject) {
-      return { isValid: false, error: 'Subject is required' };
+    if (!messageData.subject && !messageData.templateId) {
+      return { isValid: false, error: 'Subject is required (or a templateId whose subject is used)' };
     }
     
     // Either content or templateId is required
@@ -726,218 +664,79 @@ export class Metigan {
       const waitTime = this.rateLimiter.getTimeUntilNextRequest();
       throw new MetiganError(`Rate limit exceeded. Please wait ${waitTime}ms before making another request.`);
     }
-    
-    let statusCode = 500; // Default error status
-    
-    try {
-      // Validate message data
-      const validation = this._validateMessageData(options);
-      if (!validation.isValid) {
-        throw new MetiganError(validation.error || 'Invalid email data');
-      }
-      
-      // Sanitize inputs for security
-      const sanitizedOptions = {
-        ...options,
-        from: sanitizeEmail(options.from),
-        recipients: options.recipients.map(r => sanitizeEmail(r)),
-        subject: sanitizeSubject(options.subject),
-        content: options.content ? (this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content) : undefined,
-        templateId: options.templateId,
-        cc: options.cc?.map(c => sanitizeEmail(c)),
-        bcc: options.bcc?.map(b => sanitizeEmail(b)),
-        replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : undefined
-      };
-      
-      // Determine if using template
-      const useTemplate = !!options.templateId;
-      
-      this.debug.log('Email sanitized and validated');
-      
-      // Build the request body. File/Blob attachments are sent as multipart
-      // form-data; Buffer/base64 attachments (Node) are sent as JSON. The
-      // choice is driven by the attachment type, not by the runtime, so
-      // Node 18+ (which has a global FormData) is handled correctly.
-      let formData: any;
-      const attachmentsAreFileLike =
-        !!options.attachments &&
-        options.attachments.length > 0 &&
-        options.attachments.every(
-          (a: any) =>
-            (typeof File !== 'undefined' && a instanceof File) ||
-            (typeof Blob !== 'undefined' && a instanceof Blob),
-        );
 
-      if (options.attachments && options.attachments.length > 0) {
-        // Validate attachments for security
-        await this._validateAttachments(options.attachments);
+    const validation = this._validateMessageData(options);
+    if (!validation.isValid) {
+      throw new MetiganError(validation.error || 'Invalid email data');
+    }
 
-        if (attachmentsAreFileLike) {
-          formData = new FormData();
-          formData.append('from', sanitizedOptions.from);
-          formData.append('recipients', JSON.stringify(sanitizedOptions.recipients));
-          formData.append('subject', sanitizedOptions.subject);
-          
-          // Add content or template
-          if (useTemplate && sanitizedOptions.templateId) {
-            formData.append('useTemplate', 'true');
-            formData.append('templateId', sanitizedOptions.templateId);
-          } else if (sanitizedOptions.content) {
-            formData.append('content', sanitizedOptions.content);
-          }
-          
-          // Add CC if provided
-          if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-            formData.append('cc', JSON.stringify(sanitizedOptions.cc));
-          }
-          
-          // Add BCC if provided
-          if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-            formData.append('bcc', JSON.stringify(sanitizedOptions.bcc));
-          }
-          
-          // Add reply-to if provided
-          if (sanitizedOptions.replyTo) {
-            formData.append('replyTo', sanitizedOptions.replyTo);
-          }
-          
-          // Append File/Blob attachments directly (browser and Node 18+).
-          for (const file of options.attachments as Array<File | Blob>) {
-            formData.append('files', file, (file as File).name);
-          }
-        }
-        // Node.js: send Buffer/base64 attachments as JSON.
-        else {
-          const processedAttachments = await this._processAttachments(options.attachments);
-          
-          formData = {
-            from: sanitizedOptions.from,
-            recipients: sanitizedOptions.recipients,
-            subject: sanitizedOptions.subject,
-            attachments: processedAttachments
-          };
-          
-          // Add content or template
-          if (useTemplate && sanitizedOptions.templateId) {
-            formData.useTemplate = 'true';
-            formData.templateId = sanitizedOptions.templateId;
-          } else if (sanitizedOptions.content) {
-            formData.content = sanitizedOptions.content;
-          }
-          
-          // Add CC if provided
-          if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-            formData.cc = sanitizedOptions.cc;
-          }
-          
-          // Add BCC if provided
-          if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-            formData.bcc = sanitizedOptions.bcc;
-          }
-          
-          // Add reply-to if provided
-          if (sanitizedOptions.replyTo) {
-            formData.replyTo = sanitizedOptions.replyTo;
-          }
-        }
-      } 
-      // No attachments
-      else {
-        formData = {
-          from: sanitizedOptions.from,
-          recipients: sanitizedOptions.recipients,
-          subject: sanitizedOptions.subject,
-        };
-        
-        // Add content or template
-        if (useTemplate && sanitizedOptions.templateId) {
-          formData.useTemplate = 'true';
-          formData.templateId = sanitizedOptions.templateId;
-        } else if (sanitizedOptions.content) {
-          formData.content = sanitizedOptions.content;
-        }
-        
-        // Add CC if provided
-        if (sanitizedOptions.cc && sanitizedOptions.cc.length > 0) {
-          formData.cc = sanitizedOptions.cc;
-        }
-        
-        // Add BCC if provided
-        if (sanitizedOptions.bcc && sanitizedOptions.bcc.length > 0) {
-          formData.bcc = sanitizedOptions.bcc;
-        }
-        
-        // Add reply-to if provided
-        if (sanitizedOptions.replyTo) {
-          formData.replyTo = sanitizedOptions.replyTo;
-        }
-      }
-      
-      // Make the API request with retry
-      try {
-        const isMultipart = typeof FormData !== 'undefined' && formData instanceof FormData;
-        const response = await this.http.request<EmailApiResponse>(
-          'POST',
-          '/api/email/send',
-          isMultipart ? { form: formData } : { body: formData },
-        );
-        statusCode = 200; // Sucesso
-        
-        // Log successful operation
-        await this.logger.log(
-          `/email/send`, 
-          statusCode, 
-          'POST'
-        );
-        
-        return response;
-      } catch (httpError: any) {
-        // Captura o status code do erro
-        if (httpError.status) {
-          statusCode = httpError.status;
-        }
-        
-        // Log failed operation
-        await this.logger.log(
-          `/email/send`, 
-          statusCode, 
-          'POST'
-        );
-        
-        // Handle HTTP errors without exposing implementation details
-        if (httpError.status) {
-          if (httpError.data && httpError.data.error) {
-            throw new MetiganError(httpError.data.message || httpError.data.error);
-          } else {
-            throw new MetiganError(`Request failed with status ${httpError.status}`);
-          }
-        }
-        throw new MetiganError('Failed to connect to the email service');
-      }
-    } catch (error: unknown) {
-      // Log error operation
-      await this.logger.log(
-        `/email/send/error`, 
-        statusCode, 
-        'POST'
+    // Fields sent as JSON or as multipart form fields (strings).
+    const fields: Record<string, unknown> = {
+      from: sanitizeEmail(options.from),
+      recipients: options.recipients.map(r => sanitizeEmail(r)),
+      subject: options.subject ? sanitizeSubject(options.subject) : undefined,
+      cc: options.cc?.length ? options.cc.map(c => sanitizeEmail(c)) : undefined,
+      bcc: options.bcc?.length ? options.bcc.map(b => sanitizeEmail(b)) : undefined,
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : undefined,
+      text: options.text,
+      variables: options.variables,
+      type: options.type,
+      trackOpens: options.trackOpens,
+      trackClicks: options.trackClicks,
+      unsubscribe: options.unsubscribe,
+      headers: options.headers,
+    };
+    if (options.templateId) {
+      fields.useTemplate = 'true';
+      fields.templateId = options.templateId;
+    } else if (options.content) {
+      fields.content = this.shouldSanitizeHtml ? sanitizeHtml(options.content) : options.content;
+    }
+
+    // One key per call, reused by the HTTP client's retries: a timeout
+    // followed by a retry can never send the email twice.
+    const idempotencyKey = options.idempotencyKey || newIdempotencyKey();
+    const headers = { 'Idempotency-Key': idempotencyKey };
+
+    let request: { form?: FormData; body?: unknown; headers: Record<string, string> } = { body: fields, headers };
+    if (options.attachments && options.attachments.length > 0) {
+      await this._validateAttachments(options.attachments);
+      const fileLike = options.attachments.every(
+        (a: any) => (typeof File !== 'undefined' && a instanceof File) || (typeof Blob !== 'undefined' && a instanceof Blob),
       );
-      
-      // Rethrow MetiganErrors directly
-      if (error instanceof MetiganError) {
-        throw error;
+      if (fileLike) {
+        // File/Blob attachments go as multipart form-data (browser, Node 18+).
+        const form = new FormData();
+        for (const [k, v] of Object.entries(fields)) {
+          if (v === undefined) continue;
+          form.append(k, typeof v === 'string' ? v : JSON.stringify(v));
+        }
+        for (const file of options.attachments as Array<File | Blob>) {
+          form.append('files', file, (file as File).name);
+        }
+        request = { form, headers };
+      } else {
+        // Buffer/base64 attachments (Node) go as JSON.
+        request = { body: { ...fields, attachments: await this._processAttachments(options.attachments) }, headers };
       }
-      
-      // Wrap other errors
+    }
+
+    try {
+      const response = await this.http.request<EmailApiResponse>('POST', '/api/email/send', request);
+      await this.logger.log('/email/send', 200, 'POST');
+      return response;
+    } catch (error: unknown) {
+      await this.logger.log('/email/send', error instanceof ApiError && error.status ? error.status : 500, 'POST');
+      // ApiError keeps status and data (429 vs 400 vs 403 matter to callers).
+      if (error instanceof MetiganError) throw error;
       throw new MetiganError('An unexpected error occurred while sending email');
     }
-  }  /**
-   * Generates a unique tracking ID for email analytics
-   * @returns A unique tracking ID string
-   * @private
-   */
+  }
+
   /**
-   * Send OTP email (fast lane)
-   * @param options - OTP send options
+   * Send an OTP (one-time code) email: dedicated realtime queue and worker
+   * pool, no tracking, no List-Unsubscribe. Safe to retry: one email per
+   * idempotency key (generated per call when omitted).
    */
   async sendOtp(options: OtpSendOptions): Promise<OtpSendResponse> {
     const recipient = options.to || options.email;
@@ -947,26 +746,34 @@ export class Metigan {
     if (!options.from) {
       throw new MetiganError('Sender email (from) is required');
     }
-    if (!options.code) {
+    if (options.code === undefined || options.code === null || options.code === '') {
       throw new MetiganError('OTP code is required');
     }
 
     const payload = {
-      ...(options.to ? { to: recipient } : { email: recipient }),
+      to: sanitizeEmail(recipient),
       from: sanitizeEmail(options.from),
-      code: options.code,
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : undefined,
+      code: typeof options.code === 'number' ? String(options.code) : options.code,
       appName: options.appName,
       expiresInMinutes: options.expiresInMinutes,
+      locale: options.locale,
       subject: options.subject ? sanitizeSubject(options.subject) : undefined,
-      idempotencyKey: options.idempotencyKey
+      templateId: options.templateId,
+      variables: options.variables,
+      text: options.text,
+      headers: options.headers,
     };
-
-    return this.http.request<OtpSendResponse>('POST', '/api/otp/send', { body: payload });
+    return this.http.request<OtpSendResponse>('POST', '/api/otp/send', {
+      body: payload,
+      headers: { 'Idempotency-Key': options.idempotencyKey || newIdempotencyKey() },
+    });
   }
 
   /**
-   * Send transactional email (fast lane)
-   * @param options - Transactional send options
+   * Send a transactional email (password reset, account verification,
+   * welcome, receipt): realtime queue, opens tracked, links not tracked by
+   * default. Safe to retry: one email per idempotency key.
    */
   async sendTransactional(options: TransactionalSendOptions): Promise<TransactionalSendResponse> {
     const recipient = options.to || options.email;
@@ -976,23 +783,44 @@ export class Metigan {
     if (!options.from) {
       throw new MetiganError('Sender email (from) is required');
     }
-    if (!options.subject) {
-      throw new MetiganError('Subject is required');
-    }
     const content = options.content || options.html;
-    if (!content) {
-      throw new MetiganError('Content or html is required');
+    if (!content && !options.templateId) {
+      throw new MetiganError('Content (html) or templateId is required');
+    }
+    if (!options.subject && !options.templateId) {
+      throw new MetiganError('Subject is required');
     }
 
     const payload = {
-      ...(options.to ? { to: recipient } : { email: recipient }),
+      to: sanitizeEmail(recipient),
       from: sanitizeEmail(options.from),
-      subject: sanitizeSubject(options.subject),
-      content: this.shouldSanitizeHtml ? sanitizeHtml(content) : content,
-      idempotencyKey: options.idempotencyKey
+      replyTo: options.replyTo ? sanitizeEmail(options.replyTo) : undefined,
+      subject: options.subject ? sanitizeSubject(options.subject) : undefined,
+      content: content ? (this.shouldSanitizeHtml ? sanitizeHtml(content) : content) : undefined,
+      text: options.text,
+      templateId: options.templateId,
+      variables: options.variables,
+      trackOpens: options.trackOpens,
+      trackClicks: options.trackClicks,
+      headers: options.headers,
     };
+    return this.http.request<TransactionalSendResponse>('POST', '/api/transactional/send', {
+      body: payload,
+      headers: { 'Idempotency-Key': options.idempotencyKey || newIdempotencyKey() },
+    });
+  }
 
-    return this.http.request<TransactionalSendResponse>('POST', '/api/transactional/send', { body: payload });
+  /**
+   * Where an email is now: queued/sending, sent, delivered, opened,
+   * clicked, bounced, failed… `emailId` comes from the send response.
+   * A 404 right after sending means the worker has not picked it up yet.
+   */
+  async getEmailStatus(emailId: string): Promise<EmailStatus> {
+    if (!emailId) {
+      throw new MetiganError('emailId is required');
+    }
+    const res = await this.http.request<{ success: boolean; data: EmailStatus }>('GET', `/api/email/${encodeURIComponent(emailId)}`);
+    return res.data;
   }
 
   /**
