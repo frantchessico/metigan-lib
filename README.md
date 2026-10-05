@@ -236,6 +236,35 @@ await metigan.email.sendEmail({
 });
 ```
 
+## Suppressions
+
+The suppression list holds the addresses Metigan does not send to: hard and
+soft bounces, spam complaints, unsubscribes and the ones you block. It applies
+to every send. Soft bounces expire after 30 days.
+
+```ts
+// Is an address blocked, and why?
+const detail = await metigan.suppressions.get('ana@example.com');
+// { suppressed: true, suppression: { reason: 'hard_bounce', bounceCode: '5.1.1', … }, history: [...] }
+
+// List, filtered (a whole domain with "@domain")
+const { data, summary } = await metigan.suppressions.list({ reason: 'hard_bounce', search: '@acme.com' });
+
+// Sync opt-outs from your CRM (blocks campaigns, keeps transactional email)
+await metigan.suppressions.add(crmOptOuts, { reason: 'unsubscribe', note: 'CRM sync' });
+
+// Never send to these (any number: sent in batches of 1000)
+await metigan.suppressions.add(['legal-hold@acme.com']);
+
+// Remove: bounces and manual blocks freely; an unsubscribe only with renewed consent
+await metigan.suppressions.remove('bob@example.com');
+await metigan.suppressions.remove('carol@example.com', { consent: true, note: 'signed up again' });
+```
+
+Spam complaints can only be removed by Metigan support; removing one throws an
+`ApiError` with status 403 (`isSuppressionPolicyError(err)` is `true`), and an
+unsubscribe without `consent: true` throws status 409.
+
 ## Webhooks
 
 Metigan signs every webhook delivery with HMAC-SHA256 so you can prove it came

@@ -1780,6 +1780,123 @@ var MetiganTemplates = class {
   }
 };
 
+// src/lib/suppressions.ts
+var BATCH = 1e3;
+function day(v) {
+  return v instanceof Date ? v.toISOString() : v;
+}
+var MetiganSuppressions = class {
+  constructor(options) {
+    this.http = new HttpClient(options);
+  }
+  request(method, endpoint, data) {
+    return this.http.request(method, endpoint, { body: data });
+  }
+  /**
+   * List suppressed addresses.
+   *
+   * @example
+   * ```typescript
+   * const { data, summary } = await metigan.suppressions.list({ reason: 'hard_bounce', search: '@acme.com' });
+   * ```
+   */
+  async list(options = {}) {
+    const p = new URLSearchParams();
+    if (options.page) p.set("page", String(options.page));
+    if (options.limit) p.set("limit", String(options.limit));
+    if (options.reason) p.set("reason", options.reason);
+    if (options.source) p.set("source", options.source);
+    if (options.search) p.set("search", options.search);
+    if (options.from) p.set("from", day(options.from));
+    if (options.to) p.set("to", day(options.to));
+    if (options.sort) p.set("sort", options.sort);
+    const qs = p.toString();
+    return this.request("GET", `/api/suppressions${qs ? `?${qs}` : ""}`);
+  }
+  /**
+   * Look an address up: whether it is suppressed, why, and the changes made to it.
+   */
+  async get(email) {
+    if (!email) throw new MetiganError("Email is required");
+    const res = await this.request("GET", `/api/suppressions/${encodeURIComponent(email)}`);
+    return res.data;
+  }
+  /**
+   * Whether Metigan would refuse to send to `email`.
+   *
+   * @example
+   * ```typescript
+   * if (await metigan.suppressions.isSuppressed('ana@example.com')) { … }
+   * ```
+   */
+  async isSuppressed(email) {
+    return (await this.get(email)).suppressed;
+  }
+  /**
+   * Suppress addresses (any number: sent in batches of 1000). Addresses
+   * already suppressed keep their reason.
+   *
+   * @example
+   * ```typescript
+   * // Opt-outs recorded in your CRM:
+   * await metigan.suppressions.add(['ana@example.com'], { reason: 'unsubscribe' });
+   * ```
+   */
+  async add(emails, options = {}) {
+    const list = (Array.isArray(emails) ? emails : [emails]).filter((e) => typeof e === "string" && e.trim() !== "");
+    if (list.length === 0) throw new MetiganError("At least one email is required");
+    const out = { added: [], alreadySuppressed: {}, invalid: [] };
+    for (let i = 0; i < list.length; i += BATCH) {
+      const res = await this.request("POST", "/api/suppressions", {
+        emails: list.slice(i, i + BATCH),
+        reason: options.reason ?? "manual",
+        note: options.note
+      });
+      out.added.push(...res.data.added);
+      Object.assign(out.alreadySuppressed, res.data.alreadySuppressed);
+      out.invalid.push(...res.data.invalid);
+    }
+    return out;
+  }
+  /**
+   * Remove one address from the list. Throws an ApiError with status 409
+   * (`consent_required`) for an unsubscribe without `consent: true`, 403
+   * (`support_only`) for a spam complaint and 404 when not suppressed.
+   */
+  async remove(email, options = {}) {
+    if (!email) throw new MetiganError("Email is required");
+    const p = new URLSearchParams();
+    if (options.consent) p.set("consent", "true");
+    if (options.note) p.set("note", options.note);
+    const qs = p.toString();
+    const res = await this.request(
+      "DELETE",
+      `/api/suppressions/${encodeURIComponent(email)}${qs ? `?${qs}` : ""}`
+    );
+    return res.data;
+  }
+  /**
+   * Remove several addresses; each follows its removal policy and the
+   * result says what happened to every one (never throws for policy).
+   */
+  async removeMany(emails, options = {}) {
+    const list = emails.filter((e) => typeof e === "string" && e.trim() !== "");
+    const out = { removed: [], notFound: [], supportOnly: [], consentRequired: [], invalid: [] };
+    for (let i = 0; i < list.length; i += BATCH) {
+      const res = await this.request("POST", "/api/suppressions/remove", {
+        emails: list.slice(i, i + BATCH),
+        consent: options.consent ?? false,
+        note: options.note
+      });
+      for (const k of Object.keys(out)) out[k].push(...res.data[k]);
+    }
+    return out;
+  }
+};
+function isSuppressionPolicyError(err) {
+  return err instanceof ApiError && (err.status === 403 || err.status === 409);
+}
+
 // src/lib/webhooks.ts
 var WEBHOOK_EVENT_NAMES = [
   "email.sent",
@@ -2072,6 +2189,13 @@ var Metigan2 = class {
       retryCount: options.retryCount,
       retryDelay: options.retryDelay
     });
+    this.suppressions = new MetiganSuppressions({
+      baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
+      timeout: options.timeout,
+      retryCount: options.retryCount,
+      retryDelay: options.retryDelay
+    });
     this.webhooks = new MetiganWebhooks({
       secret: options.webhookSecret
     });
@@ -2095,6 +2219,7 @@ exports.MetiganEmail = metigan_default;
 exports.MetiganEmailClient = Metigan;
 exports.MetiganError = MetiganError;
 exports.MetiganForms = MetiganForms;
+exports.MetiganSuppressions = MetiganSuppressions;
 exports.MetiganTemplates = MetiganTemplates;
 exports.MetiganWebhooks = MetiganWebhooks;
 exports.RateLimiter = RateLimiter;
@@ -2105,6 +2230,7 @@ exports.WebhookSignatureError = WebhookSignatureError;
 exports.default = src_default;
 exports.isAllowedMimeType = isAllowedMimeType;
 exports.isSafeFileExtension = isSafeFileExtension;
+exports.isSuppressionPolicyError = isSuppressionPolicyError;
 exports.isWebhookEvent = isWebhookEvent;
 exports.sanitizeEmail = sanitizeEmail;
 exports.sanitizeHtml = sanitizeHtml;

@@ -1304,6 +1304,171 @@ declare class WebhookSignatureError extends MetiganError {
 }
 
 /**
+ * Metigan Suppressions Module
+ * Read and manage the account's suppression list: the addresses Metigan
+ * does not send to (bounces, spam complaints, unsubscribes and the ones you
+ * block). The list applies to every send; keep it in sync with your CRM.
+ * @version 2.5.0
+ */
+
+/** Why an address is suppressed. */
+type SuppressionReason = 'hard_bounce' | 'soft_bounce' | 'complaint' | 'unsubscribe' | 'manual' | 'invalid_format';
+/**
+ * What its owner may do with a suppression:
+ * - `allowed`: remove freely (bounces, manual, invalid);
+ * - `consent_required`: an unsubscribe, removed only with `consent: true`;
+ * - `support_only`: a spam complaint, removed only by Metigan support.
+ */
+type SuppressionPolicy = 'allowed' | 'consent_required' | 'support_only';
+interface Suppression {
+    email: string;
+    reason: SuppressionReason;
+    /** Where it came from: bounce_handler, complaint_handler, unsubscribe_link, api, dashboard… */
+    source: string;
+    createdAt: string;
+    updatedAt: string;
+    /** Temporary suppressions (soft bounces) end here. */
+    expiresAt?: string;
+    /** DSN status of the bounce, e.g. "5.1.1". */
+    bounceCode?: string;
+    /** The receiving server's response. */
+    diagnostic?: string;
+    messageId?: string;
+    /** The email that caused it, while its tracking is kept. */
+    message?: {
+        messageId: string;
+        emailId: string;
+        subject: string;
+        sentAt: string;
+    };
+    policy: SuppressionPolicy;
+}
+interface SuppressionListOptions {
+    page?: number;
+    /** 1–200 (default 50). */
+    limit?: number;
+    reason?: SuppressionReason;
+    source?: string;
+    /** Substring of the address; "@company.com" matches a whole domain. */
+    search?: string;
+    /** Date suppressed, from (inclusive), YYYY-MM-DD or ISO 8601. */
+    from?: string | Date;
+    /** Date suppressed, to (inclusive day), YYYY-MM-DD or ISO 8601. */
+    to?: string | Date;
+    sort?: 'newest' | 'oldest' | 'email';
+}
+interface SuppressionListResponse {
+    success: boolean;
+    data: Suppression[];
+    pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+        hasMore: boolean;
+    };
+    summary: {
+        total: number;
+        byReason: Record<SuppressionReason, number>;
+    };
+}
+interface SuppressionHistoryEntry {
+    id: string;
+    email: string;
+    action: 'added' | 'removed';
+    reason: SuppressionReason;
+    source?: string;
+    actor: string;
+    consent?: boolean;
+    note?: string;
+    at: string;
+}
+interface SuppressionDetail {
+    email: string;
+    suppressed: boolean;
+    suppression?: Suppression;
+    history: SuppressionHistoryEntry[];
+}
+interface AddSuppressionsOptions {
+    /** `manual` (never send, default) or `unsubscribe` (blocks campaigns, keeps transactional email). */
+    reason?: 'manual' | 'unsubscribe';
+    /** Kept in the suppression history (≤ 500 characters). */
+    note?: string;
+}
+interface AddSuppressionsResult {
+    added: string[];
+    /** Addresses already suppressed, with the reason they keep. */
+    alreadySuppressed: Record<string, SuppressionReason>;
+    invalid: string[];
+}
+interface RemoveSuppressionOptions {
+    /** Required to remove an unsubscribe: the recipient opted in again. */
+    consent?: boolean;
+    note?: string;
+}
+interface RemoveSuppressionsResult {
+    removed: string[];
+    notFound: string[];
+    supportOnly: string[];
+    consentRequired: string[];
+    invalid: string[];
+}
+/**
+ * MetiganSuppressions - Manage the suppression list
+ */
+declare class MetiganSuppressions {
+    private http;
+    constructor(options: TemplateModuleOptions);
+    private request;
+    /**
+     * List suppressed addresses.
+     *
+     * @example
+     * ```typescript
+     * const { data, summary } = await metigan.suppressions.list({ reason: 'hard_bounce', search: '@acme.com' });
+     * ```
+     */
+    list(options?: SuppressionListOptions): Promise<SuppressionListResponse>;
+    /**
+     * Look an address up: whether it is suppressed, why, and the changes made to it.
+     */
+    get(email: string): Promise<SuppressionDetail>;
+    /**
+     * Whether Metigan would refuse to send to `email`.
+     *
+     * @example
+     * ```typescript
+     * if (await metigan.suppressions.isSuppressed('ana@example.com')) { … }
+     * ```
+     */
+    isSuppressed(email: string): Promise<boolean>;
+    /**
+     * Suppress addresses (any number: sent in batches of 1000). Addresses
+     * already suppressed keep their reason.
+     *
+     * @example
+     * ```typescript
+     * // Opt-outs recorded in your CRM:
+     * await metigan.suppressions.add(['ana@example.com'], { reason: 'unsubscribe' });
+     * ```
+     */
+    add(emails: string | string[], options?: AddSuppressionsOptions): Promise<AddSuppressionsResult>;
+    /**
+     * Remove one address from the list. Throws an ApiError with status 409
+     * (`consent_required`) for an unsubscribe without `consent: true`, 403
+     * (`support_only`) for a spam complaint and 404 when not suppressed.
+     */
+    remove(email: string, options?: RemoveSuppressionOptions): Promise<Suppression>;
+    /**
+     * Remove several addresses; each follows its removal policy and the
+     * result says what happened to every one (never throws for policy).
+     */
+    removeMany(emails: string[], options?: RemoveSuppressionOptions): Promise<RemoveSuppressionsResult>;
+}
+/** True when `err` is the API refusing to remove a suppression for policy. */
+declare function isSuppressionPolicyError(err: unknown): err is ApiError;
+
+/**
  * Webhook signature verification.
  *
  * Metigan signs every webhook delivery so you can prove it came from us and
@@ -1579,6 +1744,8 @@ declare class Metigan {
     audiences: MetiganAudiences;
     /** Templates module for managing email templates */
     templates: MetiganTemplates;
+    /** Suppressions module: addresses Metigan does not send to */
+    suppressions: MetiganSuppressions;
     /** Webhooks module for verifying incoming webhook signatures */
     webhooks: MetiganWebhooks;
     /**
@@ -1590,4 +1757,4 @@ declare class Metigan {
 
 // @ts-ignore
 export = Metigan;
-export { ALLOWED_MIME_TYPES, API_URL, type AnyWebhookEvent, ApiError, type ApiKeyErrorResponse$1 as ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactCreatedData, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment$1 as CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, type DashboardObjectData, DebugLogger, type EmailApiResponse$1 as EmailApiResponse, type EmailDeliveryData, type EmailErrorResponse$1 as EmailErrorResponse, type EmailEventMetadata, type EmailFailedData, type EmailOptions$1 as EmailOptions, type EmailSentData, type EmailSuccessResponse$1 as EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type EmailUnsubscribedData, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, type HeadersLike, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganTemplates, MetiganWebhooks, type MetiganWebhooksOptions, type NodeAttachment$1 as NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, RateLimiter, type RateLimiterConfig, type RawBody, SDK_VERSION, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, type VerifyWebhookOptions, WEBHOOK_EVENT_NAMES, type WebhookEvent, type WebhookEventDataMap, type WebhookEventName, WebhookSignatureError, isAllowedMimeType, isSafeFileExtension, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };
+export { ALLOWED_MIME_TYPES, API_URL, type AddSuppressionsOptions, type AddSuppressionsResult, type AnyWebhookEvent, ApiError, type ApiKeyErrorResponse$1 as ApiKeyErrorResponse, type ApiResponse, type Audience, type AudienceListResponse, type AudienceStats, BLOCKED_MIME_TYPES, type BulkContactResult, type ButtonCustomization, type Contact, type ContactCreatedData, type ContactListFilters, type ContactListResponse, type ContactStatus, type CreateAudienceOptions, type CreateContactOptions, type CustomAttachment$1 as CustomAttachment, DEFAULT_RETRY_COUNT, DEFAULT_RETRY_DELAY, DEFAULT_TIMEOUT, type DashboardObjectData, DebugLogger, type EmailApiResponse$1 as EmailApiResponse, type EmailDeliveryData, type EmailErrorResponse$1 as EmailErrorResponse, type EmailEventMetadata, type EmailFailedData, type EmailOptions$1 as EmailOptions, type EmailSentData, type EmailSuccessResponse$1 as EmailSuccessResponse, type EmailTemplate, type EmailTemplateListResponse, type EmailUnsubscribedData, type FormAnalytics, type FormAppearance, type FormConfig, type FormFieldConfig, type FormFieldType, type FormFieldValidation, type FormListResponse, type FormSettings, type FormSubmissionData, type FormSubmissionOptions, type FormSubmissionResponse, type HeadersLike, MAX_FILE_SIZE, Metigan, MetiganAudiences, type MetiganClientOptions, MetiganContacts, Metigan$1 as MetiganEmail, Metigan$1 as MetiganEmailClient, MetiganError, MetiganForms, MetiganSuppressions, MetiganTemplates, MetiganWebhooks, type MetiganWebhooksOptions, type NodeAttachment$1 as NodeAttachment, type OtpSendOptions, type OtpSendResponse, type PaginationOptions, type ProcessedAttachment, RateLimiter, type RateLimiterConfig, type RawBody, type RemoveSuppressionOptions, type RemoveSuppressionsResult, SDK_VERSION, type Suppression, type SuppressionDetail, type SuppressionHistoryEntry, type SuppressionListOptions, type SuppressionListResponse, type SuppressionPolicy, type SuppressionReason, type TemplateComponent, type TemplateComponentStyle, type TemplateFunction, type TemplateModuleOptions, type TemplateStyles, type TemplateVariables, type TransactionalSendOptions, type TransactionalSendResponse, type UpdateAudienceOptions, type UpdateContactOptions, ValidationError, type ValidationResult, type VerifyWebhookOptions, WEBHOOK_EVENT_NAMES, type WebhookEvent, type WebhookEventDataMap, type WebhookEventName, WebhookSignatureError, isAllowedMimeType, isSafeFileExtension, isSuppressionPolicyError, isWebhookEvent, sanitizeEmail, sanitizeHtml, sanitizeSubject, verifyWebhook };

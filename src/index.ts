@@ -12,6 +12,20 @@ export { MetiganForms } from './lib/forms';
 export { MetiganContacts } from './lib/contacts';
 export { MetiganAudiences } from './lib/audiences';
 export { MetiganTemplates } from './lib/templates';
+export { MetiganSuppressions, isSuppressionPolicyError } from './lib/suppressions';
+export type {
+  Suppression,
+  SuppressionReason,
+  SuppressionPolicy,
+  SuppressionListOptions,
+  SuppressionListResponse,
+  SuppressionDetail,
+  SuppressionHistoryEntry,
+  AddSuppressionsOptions,
+  AddSuppressionsResult,
+  RemoveSuppressionOptions,
+  RemoveSuppressionsResult,
+} from './lib/suppressions';
 
 // Export errors
 export { MetiganError, ValidationError, ApiError, WebhookSignatureError } from './lib/errors';
@@ -127,6 +141,7 @@ import { MetiganForms } from './lib/forms';
 import { MetiganContacts } from './lib/contacts';
 import { MetiganAudiences } from './lib/audiences';
 import { MetiganTemplates } from './lib/templates';
+import { MetiganSuppressions } from './lib/suppressions';
 import { MetiganWebhooks } from './lib/webhooks';
 import { MetiganError } from './lib/errors';
 import type { MetiganClientOptions } from './lib/types';
@@ -150,6 +165,9 @@ export class Metigan {
   
   /** Templates module for managing email templates */
   public templates: MetiganTemplates;
+
+  /** Suppressions module: addresses Metigan does not send to */
+  public suppressions: MetiganSuppressions;
 
   /** Webhooks module for verifying incoming webhook signatures */
   public webhooks: MetiganWebhooks;
@@ -202,6 +220,14 @@ export class Metigan {
     });
     
     this.templates = new MetiganTemplates({
+      baseUrl: options.baseUrl,
+      apiKey: options.apiKey,
+      timeout: options.timeout,
+      retryCount: options.retryCount,
+      retryDelay: options.retryDelay
+    });
+
+    this.suppressions = new MetiganSuppressions({
       baseUrl: options.baseUrl,
       apiKey: options.apiKey,
       timeout: options.timeout,
